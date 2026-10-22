@@ -50,6 +50,10 @@ else()	# Rules for normal build follow
 
 	add_custom_command(OUTPUT ${CPUEMU_SRCS} COMMAND gencpu  DEPENDS gencpu)
 
+	# Build tools: kept here, not beside the program
+	set_target_properties(build68k gencpu PROPERTIES
+			      RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
 endif(CMAKE_CROSSCOMPILING)
 
 if(CMAKE_COMPILER_IS_GNUCC OR CMAKE_C_COMPILER_ID MATCHES "Clang")

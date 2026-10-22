@@ -13,3 +13,5 @@ extern bool ShortCut_CheckKeys(int symkey, bool with_mod, bool press);
 extern bool Shortcut_Invoke(const char *shortcut);
 /* Act on the stored keypress (in VBL) */
 extern void ShortCut_ActKey(void);
+/* Run a shortcut's action (SHORTCUT_*) as if its key had been pressed */
+extern void ShortCut_Run(int key);

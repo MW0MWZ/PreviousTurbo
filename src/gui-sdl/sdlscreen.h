@@ -15,14 +15,14 @@ extern "C" {
 #include <SDL3/SDL.h>
 
 extern SDL_Window  *sdlWindow;
-extern SDL_Surface *sdlscrn;
 
-extern void Screen_UpdateRects(SDL_Surface *screen, int numrects, SDL_Rect *rects);
-extern void Screen_UpdateRect(SDL_Surface *screen, int32_t x, int32_t y, int32_t w, int32_t h);
 extern void Screen_BlitDimension(uint32_t* vram, SDL_Texture* tex);
 extern void Screen_Blank(SDL_Texture* tex);
 
 extern bool Screen_Repaint(void);
+extern bool Screen_UpdatePictures(void);
+extern int  Screen_GetPictures(SDL_Texture** tex, SDL_FRect* rects, int max);
+extern SDL_Renderer* Screen_GetRenderer(void);
 extern void Screen_SizeChanged(void);
 
 extern void Screen_Init(void);

@@ -70,6 +70,8 @@ bool Dialog_DoProperty(void)
 	/* Copy details to configuration */
 	if (bOKDialog) {
 		Change_CopyChangedParamsToConfiguration(&current, &ConfigureParams, bForceReset);
+		/* Kept for the next start (Documents/PreviousTurbo/settings.cfg) */
+		Configuration_Save();
 	} else {
 		ConfigureParams = current;
 	}

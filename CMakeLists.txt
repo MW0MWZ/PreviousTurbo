@@ -2,16 +2,31 @@ cmake_minimum_required(VERSION 3.12 FATAL_ERROR)
 
 # Set build type to "Release" if user did not specify any build type yet
 # Other possible values: Debug, Release, RelWithDebInfo and MinSizeRel
-if(NOT CMAKE_BUILD_TYPE)
-	set(CMAKE_BUILD_TYPE Release)
-endif(NOT CMAKE_BUILD_TYPE)
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+	set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
 
-if(APPLE AND CMAKE_BUILD_TYPE STREQUAL "Release")
-	set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Target architectures")
-	set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Target minimum macOS version")
-endif(APPLE AND CMAKE_BUILD_TYPE STREQUAL "Release")
+# Build folders configured before PreviousTurbo built for the Mac it is on
+# keep the old macOS target (10.13 or 11.0) in their cache, which the current
+# C++ library and Homebrew's libraries warn about: forget it.
+if(APPLE)
+	foreach(var CMAKE_OSX_DEPLOYMENT_TARGET CMAKE_OSX_ARCHITECTURES)
+		get_property(help CACHE ${var} PROPERTY HELPSTRING)
+		if(help STREQUAL "Target minimum macOS version" OR help STREQUAL "Target architectures")
+			unset(${var} CACHE)
+		endif()
+	endforeach()
+endif()
 
-project(Previous)
+project(PreviousTurbo VERSION 0.1.0 DESCRIPTION "NeXT computer emulator" LANGUAGES C CXX)
+
+# The programs go in the top of the build folder: build/previousturbo (and
+# build/PreviousTurbo.app on macOS), build/ditool, build/pt_tests.
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+option(PT_BUILD_TESTS "Build unit tests" ON)
 
 set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
@@ -93,23 +108,18 @@ if(HARDENED_AVAILABLE)
 	    CACHE BOOL "Enable GCC/LLVM run-time hardening options (for production / distros not enabling them by default)")
 endif(HARDENED_AVAILABLE)
 
+# The emulator runs on its own thread and the window (menus, dialogs,
+# picture) on the main thread, on every platform.
+set(ENABLE_RENDERING_THREAD 0)
 if(APPLE)
-	set(ENABLE_RENDERING_THREAD 1
-	    CACHE BOOL "Enable rendering threads")
 	set(ENABLE_OSX_BUNDLE 1
-	    CACHE BOOL "Built Previous as macOS application bundle")
+	    CACHE BOOL "Build PreviousTurbo as a macOS application bundle")
 else()
-	set(ENABLE_RENDERING_THREAD 0
-	    CACHE BOOL "Enable rendering threads")
 	set(ENABLE_OSX_BUNDLE 0
-	    CACHE BOOL "Built Previous as macOS application bundle")
+	    CACHE BOOL "Build PreviousTurbo as a macOS application bundle")
 endif(APPLE)
 
-if(ENABLE_OSX_BUNDLE)
-	set(APP_NAME "Previous")
-else()
-	set(APP_NAME "previous")
-endif(ENABLE_OSX_BUNDLE)
+set(APP_NAME "previousturbo")
 
 # ####################
 # Check for libraries:
@@ -309,7 +319,11 @@ if(NOT BINDIR)
 endif()
 
 if(NOT DATADIR)
-	set(DATADIR share/previous)
+	if(WIN32)
+		set(DATADIR ${BINDIR})  # beside the program
+	else()
+		set(DATADIR share/previousturbo)
+	endif()
 endif()
 
 if(NOT BIN2DATADIR)
@@ -320,7 +334,7 @@ if(NOT BIN2DATADIR)
 		set(BIN2DATADIR "../Resources"
 		    CACHE STRING "Relative path from bindir to datadir")
 	else()
-		set(BIN2DATADIR "../share/previous"
+		set(BIN2DATADIR "../share/previousturbo"
 		    CACHE STRING "Relative path from bindir to datadir")
 	endif(WIN32)
 	mark_as_advanced(BIN2DATADIR)
@@ -331,7 +345,7 @@ if(NOT MANDIR)
 endif()
 
 if(NOT DOCDIR)
-	set(DOCDIR share/doc/previous)
+	set(DOCDIR share/doc/previousturbo)
 endif()
 
 if(NOT ETCDIR)
@@ -360,7 +374,15 @@ endif()
 configure_file(${CMAKE_SOURCE_DIR}/cmake/config-cmake.h
 		${CMAKE_BINARY_DIR}/config.h)
 
+if(PT_BUILD_TESTS)
+	enable_testing()
+endif()
+
 add_subdirectory(src)
+
+if(PT_BUILD_TESTS)
+	add_subdirectory(tests)
+endif()
 
 add_custom_target(uninstall
     COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/cmake/Uninstall.cmake)
@@ -430,5 +452,11 @@ if(ENABLE_RENDERING_THREAD)
 else()
   message( "  - Rendering thread :    Disabled" )
 endif(ENABLE_RENDERING_THREAD)
+
+if(PT_BUILD_TESTS)
+  message( "  - Unit tests :          Enabled (ctest --test-dir ${CMAKE_BINARY_DIR})" )
+else()
+  message( "  - Unit tests :          Disabled" )
+endif(PT_BUILD_TESTS)
 
 message( "" )

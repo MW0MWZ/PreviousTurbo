@@ -17,9 +17,17 @@ const char Paths_fileid[] = "Hatari paths.c";
 #include "paths.h"
 #include "str.h"
 
-#if defined(WIN32) && !defined(mkdir)
+#if defined(WIN32)
+#include <shlobj.h>
+#if !defined(mkdir)
 #define mkdir(name,mode) mkdir(name)
+#endif
 #endif  /* WIN32 */
+
+/* PreviousTurbo's folder in the user's Documents folder: settings, and disk
+ * images in diskImages */
+#define USER_DATA_DIR "PreviousTurbo"
+#define DISK_IMAGES_DIR "diskImages"
 
 #if defined(__APPLE__)
 	#define HATARI_HOME_DIR "Library/Application Support/Previous"
@@ -34,6 +42,8 @@ static char *sDataDir;        /* Directory where data files of Hatari can be fou
 static char *sUserHomeDir;    /* User's home directory ($HOME) */
 static char *sHatariHomeDir;  /* Hatari's home directory ($HOME/.hatari/) */
 static char *sScreenShotDir;  /* Default directory to use for screenshots */
+static char *sUserDataDir;    /* Documents/PreviousTurbo */
+static char *sDiskImagesDir;  /* Documents/PreviousTurbo/diskImages */
 
 /**
  * Return pointer to current working directory string
@@ -65,6 +75,23 @@ const char *Paths_GetUserHome(void)
 const char *Paths_GetHatariHome(void)
 {
 	return sHatariHomeDir;
+}
+
+/**
+ * Return PreviousTurbo's folder in the user's Documents folder, where the
+ * settings are kept
+ */
+const char *Paths_GetUserData(void)
+{
+	return sUserDataDir;
+}
+
+/**
+ * Return the folder disk images are chosen from at first
+ */
+const char *Paths_GetDiskImagesDir(void)
+{
+	return sDiskImagesDir;
 }
 
 /**
@@ -196,7 +223,7 @@ static char *Paths_InitExecDir(const char *argv0)
 
 /**
  * Initialize the users home directory string
- * and Hatari's home directory (~/.config/previous)
+ * and Previous's home directory (~/.config/previous)
  */
 static void Paths_InitHomeDirs(void)
 {
@@ -252,27 +279,68 @@ static void Paths_InitHomeDirs(void)
 		return;
 	}
 
-	/* Hatari home directory does not exists yet...
-	 * ... so let's try to create it: */
-#if !defined(__APPLE__) && !defined(WIN32)
-	sprintf(sHatariHomeDir, "%s%c.config", sUserHomeDir, PATHSEP);
-	if (!File_DirExists(sHatariHomeDir))
-	{
-		/* ~/.config does not exist yet, create it first */
-		if (mkdir(sHatariHomeDir, 0700) != 0)
-		{
-			perror("Failed to create ~/.config directory");
-		}
-	}
-#endif
+	/* Previous's home directory, where its settings were kept: read for
+	 * the first settings when PreviousTurbo has none yet, never created */
 	sprintf(sHatariHomeDir, "%s%c%s", sUserHomeDir, PATHSEP, HATARI_HOME_DIR);
-	if (mkdir(sHatariHomeDir, 0750) != 0)
-	{
-		/* Failed to create, so use user's home dir instead */
-		strcpy(sHatariHomeDir, sUserHomeDir);
-	}
 }
 
+
+/**
+ * Make a folder and the folders above it that are missing
+ */
+static bool Paths_MakeDirs(char *path)
+{
+	char *p;
+
+	for (p = path + 1; *p; p++) {
+		if (*p == PATHSEP
+#if defined(WIN32)
+		    || *p == '/'
+#endif
+		   ) {
+			char c = *p;
+			*p = '\0';
+			if (!File_DirExists(path))
+				mkdir(path, 0755);
+			*p = c;
+		}
+	}
+	if (!File_DirExists(path))
+		mkdir(path, 0755);
+	return File_DirExists(path);
+}
+
+/**
+ * Initialize PreviousTurbo's folder in the user's Documents folder (the same
+ * place on every system) and its diskImages folder. Without one, the
+ * settings stay in the old home directory.
+ */
+static void Paths_InitUserData(void)
+{
+	char documents[FILENAME_MAX] = "";
+
+#if defined(WIN32)
+	if (SHGetFolderPathA(NULL, CSIDL_PERSONAL, NULL, 0, documents) != S_OK)
+		documents[0] = '\0';
+#endif
+	if (!documents[0] && sUserHomeDir && sUserHomeDir[0])
+		snprintf(documents, sizeof(documents), "%s%cDocuments", sUserHomeDir, PATHSEP);
+	if (!documents[0])
+		return;
+
+	sUserDataDir = Str_Alloc(FILENAME_MAX);
+	snprintf(sUserDataDir, FILENAME_MAX, "%s%c%s", documents, PATHSEP, USER_DATA_DIR);
+	if (!Paths_MakeDirs(sUserDataDir))
+	{
+		perror("Failed to create the PreviousTurbo folder in Documents");
+		Str_Free(sUserDataDir);
+		sUserDataDir = NULL;
+		return;
+	}
+	sDiskImagesDir = Str_Alloc(FILENAME_MAX);
+	snprintf(sDiskImagesDir, FILENAME_MAX, "%s%c%s", sUserDataDir, PATHSEP, DISK_IMAGES_DIR);
+	Paths_MakeDirs(sDiskImagesDir);
+}
 
 /**
  * Initialize directory names
@@ -296,6 +364,7 @@ void Paths_Init(const char *argv0)
 
 	/* Init the user's home directory string */
 	Paths_InitHomeDirs();
+	Paths_InitUserData();
 
 	/* Get default screenshot directory string */
 #if !defined(__APPLE__)
@@ -329,6 +398,14 @@ void Paths_Init(const char *argv0)
 	/* And finally make a proper absolute path out of datadir: */
 	File_MakeAbsoluteName(sDataDir);
 
+	/* Not installed (run from the build folder): the data is beside the
+	 * program */
+	if (!File_DirExists(sDataDir) && psExecDir && strlen(psExecDir) > 0)
+	{
+		Str_Copy(sDataDir, psExecDir, FILENAME_MAX);
+		File_MakeAbsoluteName(sDataDir);
+	}
+
 	free(psExecDir);
 
 	/* fprintf(stderr, " WorkingDir = %s\n DataDir = %s\n UserHomeDir = %s\n HatariHomeDir = %s\n ScrenShotDir = %s\n",
@@ -342,4 +419,6 @@ void Paths_UnInit(void)
 	Str_Free(sUserHomeDir);
 	Str_Free(sHatariHomeDir);
 	Str_Free(sScreenShotDir);
+	Str_Free(sUserDataDir);
+	Str_Free(sDiskImagesDir);
 }

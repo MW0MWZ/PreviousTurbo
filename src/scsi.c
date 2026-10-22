@@ -111,6 +111,7 @@ struct {
     FILE* dsk;
     uint64_t size;
     uint32_t blocksize;
+    bool raw;           /* CD image of raw 2352 byte sectors (mode 1) */
     bool readonly;
     uint8_t lun;
     uint8_t status;
@@ -192,10 +193,49 @@ static const struct known_disk known_disks[] =
 
 
 /* Helpers */
+/* A CD image of raw sectors (as .bin/.cue images are): 2352 bytes each,
+ * starting with the sync pattern, the 2048 bytes of data after a 16 byte
+ * header. */
+#define CD_RAW_SECTOR  2352
+#define CD_RAW_HEADER  16
+
+static bool SCSI_IsRawCD(const char *name, off_t size) {
+    static const uint8_t sync[12] = {
+        0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00
+    };
+    uint8_t head[16];
+    bool raw = false;
+    FILE *fp;
+
+    if (size <= 0 || size % CD_RAW_SECTOR) {
+        return false;
+    }
+    fp = File_Open(name, "rb");
+    if (fp) {
+        raw = fread(head, 1, sizeof(head), fp) == sizeof(head) &&
+              !memcmp(head, sync, sizeof(sync)) && head[15] == 1;
+        File_Close(fp);
+    }
+    return raw;
+}
+
+/* Where block lba is in the image file */
+static uint64_t SCSI_FileOffset(int target, uint32_t lba) {
+    if (SCSIdisk[target].raw) {
+        return (uint64_t)lba * CD_RAW_SECTOR + CD_RAW_HEADER;
+    }
+    return (uint64_t)lba * SCSIdisk[target].blocksize;
+}
+
 static int SCSI_LookupDisk(int target) {
     int i;
     off_t size = File_Length(ConfigureParams.SCSI.target[target].szImageName);
     
+    SCSIdisk[target].raw = SCSIdisk[target].devtype == SD_CD &&
+                           SCSI_IsRawCD(ConfigureParams.SCSI.target[target].szImageName, size);
+    if (SCSIdisk[target].raw) {
+        size = size / CD_RAW_SECTOR * SCSI_CD_BLOCK; /* the data it holds */
+    }
     SCSIdisk[target].size = (size < 0) ? 0 : size;
     
     for (i = 0; i < ARRAY_SIZE(known_disks); i++) {
@@ -572,7 +612,8 @@ static void scsi_read_sector(void) {
         if (SCSIdisk[target].shadow && SCSIdisk[target].shadow[SCSIdisk[target].lba]) {
             memcpy(scsi_buffer.data, SCSIdisk[target].shadow[SCSIdisk[target].lba], SCSIdisk[target].blocksize);
         } else {
-            File_Read(scsi_buffer.data, SCSIdisk[target].blocksize, offset, SCSIdisk[target].dsk);
+            File_Read(scsi_buffer.data, SCSIdisk[target].blocksize,
+                      SCSI_FileOffset(target, SCSIdisk[target].lba), SCSIdisk[target].dsk);
         }
         scsi_buffer.size = scsi_buffer.limit = SCSIdisk[target].blocksize;
         
@@ -1120,6 +1161,7 @@ void SCSI_Insert(uint8_t i) {
 void SCSI_Eject(uint8_t i) {    
     SCSIdisk[i].dsk = File_Close(SCSIdisk[i].dsk);
     SCSIdisk[i].size = 0;
+    SCSIdisk[i].raw = false;
     SCSIdisk[i].readonly = false;
 }
 

@@ -1,0 +1,14 @@
+build*/
+.cache/
+compile_commands.json
+*.o
+# User-supplied media and disk images are never committed
+iso/
+images/
+roms-local/
+*.iso
+*.cue
+*.toc
+*.nrg
+*.chd
+*.dmg

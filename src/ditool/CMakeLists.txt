@@ -8,4 +8,6 @@ if(WIN32)
 	target_link_libraries(ditool ws2_32 Iphlpapi)
 endif(WIN32)
 
-install(TARGETS ditool RUNTIME DESTINATION ${BINDIR})
+if(NOT ENABLE_OSX_BUNDLE)
+	install(TARGETS ditool RUNTIME DESTINATION ${BINDIR})
+endif()

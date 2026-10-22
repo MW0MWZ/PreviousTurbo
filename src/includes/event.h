@@ -18,13 +18,15 @@ enum {
 	SPECIAL_EVENT_ND_DISPLAY,
 	SPECIAL_EVENT_PAUSE,
 	SPECIAL_EVENT_UNPAUSE,
-	SPECIAL_EVENT_HALT
+	SPECIAL_EVENT_HALT,
+	SPECIAL_EVENT_GUI      /* a request for the menus and dialogs (user.data1) */
 };
 
 /* These functions must be provided through host or cross-platform API. */
 extern void GuiEvent_InitEventQueue(void);
 extern void GuiEvent_InitSpecialEvent(void);
 extern void GuiEvent_SendSpecialEvent(int type);
+extern void GuiEvent_SendGuiRequest(void *request);
 extern void GuiEvent_ResetKeys(void);
 extern void GuiEvent_WarpMouse(void);
 extern void GuiEvent_EventHandler(void);

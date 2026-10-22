@@ -382,7 +382,8 @@ void Configuration_SetDefault(void)
 	const char *psHomeDir;
 	const char *psWorkingDir;
 
-	psHomeDir = Paths_GetHatariHome();
+	/* Settings are kept in Documents/PreviousTurbo */
+	psHomeDir = Paths_GetUserData() ? Paths_GetUserData() : Paths_GetHatariHome();
 	psWorkingDir = Paths_GetWorkingDir();
 
 	/* Clear parameters */
@@ -561,9 +562,9 @@ void Configuration_SetDefault(void)
 
 	/* Initialize the configuration file name */
 	if (File_MakePathBuf(sConfigFileName, sizeof(sConfigFileName),
-	                     psHomeDir, "previous", "cfg"))
+	                     psHomeDir, "settings", "cfg"))
 	{
-		strcpy(sConfigFileName, "previous.cfg");
+		strcpy(sConfigFileName, "settings.cfg");
 	}
 }
 

@@ -401,6 +401,17 @@ static void Main_LoadInitialConfig(void) {
 		free(psGlobalConfig);
 	}
 
+	/* Without settings of its own yet, start from Previous's */
+	if (!File_Exists(sConfigFileName)) {
+		char *psPreviousConfig = malloc(FILENAME_MAX);
+		if (psPreviousConfig) {
+			File_MakePathBuf(psPreviousConfig, FILENAME_MAX, Paths_GetHatariHome(),
+			                 "previous", "cfg");
+			Configuration_Load(psPreviousConfig);
+			free(psPreviousConfig);
+		}
+	}
+
 	/* Now try the users configuration file */
 	Configuration_Load(NULL);
 }

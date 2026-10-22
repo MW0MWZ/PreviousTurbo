@@ -214,6 +214,18 @@ void ShortCut_ActKey(void)
 
 /*-----------------------------------------------------------------------*/
 /**
+ * Run a shortcut's action as if its key had been pressed (from the menus)
+ */
+void ShortCut_Run(int key)
+{
+	if (key < SHORTCUT_OPTIONS || key >= SHORTCUT_KEYS)
+		return;
+	ShortCutKey = key;
+	ShortCut_ActKey();
+}
+
+/*-----------------------------------------------------------------------*/
+/**
  * Invoke shortcut identified by name. This supports only keys for
  * functionality that cannot be invoked with command line options
  * or otherwise for remote GUIs etc.

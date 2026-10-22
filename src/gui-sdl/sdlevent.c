@@ -15,11 +15,11 @@ const char SDLevent_fileid[] = "Previous sdlevent.c";
 #include "keymap.h"
 #include "screen.h"
 #include "shortcut.h"
-#include "sdlgui.h"
 #include "sdlaudio.h"
 #include "sdlkeymap.h"
 #include "sdlscreen.h"
-#include "sdlstatusbar.h"
+#include "statusbar.h"
+#include "gui.h"
 #include "tablet.h"
 #include "dimension.hpp"
 
@@ -127,7 +127,9 @@ void GuiEvent_EventQueueHandler(void) {
  * Initialize special event.
  **/
 void GuiEvent_InitSpecialEvent(void) {
-	SPECIAL_EVENT = SDL_RegisterEvents(1);
+	if (!SPECIAL_EVENT) {
+		SPECIAL_EVENT = SDL_RegisterEvents(1);
+	}
 }
 
 /* ----------------------------------------------------------------------- */
@@ -138,6 +140,19 @@ void GuiEvent_SendSpecialEvent(int type) {
 	SDL_Event event;
 	event.type = SPECIAL_EVENT;
 	event.user.code = type;
+	SDL_PushEvent(&event);
+}
+
+/* ----------------------------------------------------------------------- */
+/**
+ * Pass a request to the menus and dialogs on the main thread.
+ **/
+void GuiEvent_SendGuiRequest(void *request) {
+	SDL_Event event;
+	SDL_zero(event);
+	event.type = SPECIAL_EVENT;
+	event.user.code = SPECIAL_EVENT_GUI;
+	event.user.data1 = request;
 	SDL_PushEvent(&event);
 }
 
@@ -182,10 +197,8 @@ static void GuiEvent_HandleMouseMotion(SDL_Event *pEvent) {
 				pEvent->motion.y = mouse_event[nEvents - 1].motion.y;
 			}
 
-			/* Scale values to window coordinates */
-			SDL_RenderCoordinatesFromWindow(SDL_GetRenderer(sdlWindow), 
-			                                pEvent->motion.x, pEvent->motion.y, 
-			                                &pEvent->motion.x, &pEvent->motion.y);
+			/* Scale values to screen coordinates */
+			Gui_WindowToScreen(&pEvent->motion.x, &pEvent->motion.y);
 		} else {
 			float fExp, fLin, fSum;
 
@@ -266,198 +279,176 @@ static bool GuiEvent_ShortcutMod(int modkey)
 
 /* ----------------------------------------------------------------------- */
 /**
- * SDL message handler.
- * Here we process the SDL events (keyboard, mouse, ...)
+ * Handle one SDL event (keyboard, mouse, window, ...). Events the menus or
+ * dialogs take do not reach the emulated machine.
  */
-void GuiEvent_EventHandler(void) {
-	bool bContinueProcessing;
-	SDL_Event event;
-	bool events;
+static void GuiEvent_HandleEvent(SDL_Event *event) {
+	if (Gui_HandleEvent(event)) {
+		return;
+	}
 
-	do {
-		bContinueProcessing = false;
+	switch (event->type) {
+		case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+			SDL_FlushEvent(SDL_EVENT_QUIT); /* Remove quit event if pending */
+			Main_RequestQuit(true);
+			break;
 
-#ifdef ENABLE_RENDERING_THREAD
-		if (bEmulationActive) {
-			events = SDL_PollEvent(&event);
-		} else {
-			events = SDL_WaitEvent(&event);
-		}
-#else
-		events = SDL_WaitEventTimeout(&event, 100);
-#endif
-		if (!events) {
-			/* no events -> if emulation is active or
-			 * user is quitting -> return from function.
-			 */
-			continue;
-		}
-		switch (event.type) {
-			case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
-				SDL_FlushEvent(SDL_EVENT_QUIT); /* Remove quit event if pending */
-				Main_RequestQuit(true);
-				continue;
+		case SDL_EVENT_WINDOW_RESIZED:
+			Screen_SizeChanged();
+			break;
 
-			case SDL_EVENT_WINDOW_RESIZED:
-				Screen_SizeChanged();
-				continue;
+		case SDL_EVENT_WINDOW_FOCUS_LOST:
+			/* Another window took the keyboard: let go of the mouse, and of
+			 * the keys and buttons held, whose releases go elsewhere now.
+			 * Not for a file chooser opened from a dialog: the mouse is
+			 * captured again when the machine carries on. */
+			if (bGrabMouse && bEmulationActive && !Gui_ModalActive()) {
+				bGrabMouse = false;
+				Screen_SetMouseGrab(false);
+			}
+			Gui_ReleaseHeld();
+			break;
 
-			case SDL_EVENT_AUDIO_DEVICE_ADDED:
-				Audio_DeviceConnected(event.adevice.recording);
-				continue;
+		case SDL_EVENT_AUDIO_DEVICE_ADDED:
+			Audio_DeviceConnected(event->adevice.recording);
+			break;
 
-			case SDL_EVENT_AUDIO_DEVICE_REMOVED:
-				Audio_DeviceDisconnected(event.adevice.recording);
-				continue;
+		case SDL_EVENT_AUDIO_DEVICE_REMOVED:
+			Audio_DeviceDisconnected(event->adevice.recording);
+			break;
 
-			case SDL_EVENT_AUDIO_DEVICE_FORMAT_CHANGED:
-				Audio_FormatChanged(event.adevice.recording);
-				continue;
+		case SDL_EVENT_AUDIO_DEVICE_FORMAT_CHANGED:
+			Audio_FormatChanged(event->adevice.recording);
+			break;
 
-			case SDL_EVENT_QUIT:
-				Main_RequestQuit(true);
-				break;
+		case SDL_EVENT_QUIT:
+			Main_RequestQuit(true);
+			break;
 
-			case SDL_EVENT_MOUSE_MOTION:               /* Read/Update internal mouse position */
-				GuiEvent_HandleMouseMotion(&event);
-				break;
+		case SDL_EVENT_MOUSE_MOTION:               /* Read/Update internal mouse position */
+			GuiEvent_HandleMouseMotion(event);
+			break;
 
-			case SDL_EVENT_MOUSE_BUTTON_DOWN:
-				if (ConfigureParams.Mouse.bEnableMacClick) {
-					if (event.button.button == SDL_BUTTON_LEFT) {
-						if (SDL_GetModState() & SDL_KMOD_CTRL) {
-							event.button.button = SDL_BUTTON_RIGHT;
-						}
+		case SDL_EVENT_MOUSE_BUTTON_DOWN:
+			if (ConfigureParams.Mouse.bEnableMacClick) {
+				if (event->button.button == SDL_BUTTON_LEFT) {
+					if (SDL_GetModState() & SDL_KMOD_CTRL) {
+						event->button.button = SDL_BUTTON_RIGHT;
 					}
 				}
-				if (event.button.button == SDL_BUTTON_LEFT) {
-					if (ConfigureParams.Mouse.bEnableAutoGrab) {
-						if (bGrabMouse) {
-							if (SDL_GetModState() & SDL_KMOD_CTRL) {
-								bGrabMouse = false;
-								Screen_SetMouseGrab(bGrabMouse);
-								break;
-							}
-						} else {
-							bGrabMouse = true;
+			}
+			if (event->button.button == SDL_BUTTON_LEFT) {
+				if (ConfigureParams.Mouse.bEnableAutoGrab) {
+					if (bGrabMouse) {
+						if (SDL_GetModState() & SDL_KMOD_CTRL) {
+							bGrabMouse = false;
 							Screen_SetMouseGrab(bGrabMouse);
 							break;
 						}
-					}
-#ifdef ENABLE_RENDERING_THREAD
-					Keymap_MouseDown(true);
-#else
-					GuiEvent_PutEventQueue(&event);
-#endif
-				}
-				else if (event.button.button == SDL_BUTTON_RIGHT)
-				{
-#ifdef ENABLE_RENDERING_THREAD
-					Keymap_MouseDown(false);
-#else
-					GuiEvent_PutEventQueue(&event);
-#endif
-				}
-				break;
-
-			case SDL_EVENT_MOUSE_BUTTON_UP:
-				if (ConfigureParams.Mouse.bEnableMacClick) {
-					if (event.button.button == SDL_BUTTON_LEFT) {
-						if (SDL_GetModState() & SDL_KMOD_CTRL) {
-							event.button.button = SDL_BUTTON_RIGHT;
-						}
+					} else {
+						bGrabMouse = true;
+						Screen_SetMouseGrab(bGrabMouse);
+						break;
 					}
 				}
-				if (event.button.button == SDL_BUTTON_LEFT) {
-#ifdef ENABLE_RENDERING_THREAD
-					Keymap_MouseUp(true);
-#else
-					GuiEvent_PutEventQueue(&event);
-#endif
-				}
-				else if (event.button.button == SDL_BUTTON_RIGHT)
-				{
-#ifdef ENABLE_RENDERING_THREAD
-					Keymap_MouseUp(false);
-#else
-					GuiEvent_PutEventQueue(&event);
-#endif
-				}
-				break;
+				GuiEvent_PutEventQueue(event);
+			}
+			else if (event->button.button == SDL_BUTTON_RIGHT)
+			{
+				GuiEvent_PutEventQueue(event);
+			}
+			break;
 
-			case SDL_EVENT_MOUSE_WHEEL:
-#ifdef ENABLE_RENDERING_THREAD
-				Keymap_MouseWheel(&event.wheel);
-#else
-				GuiEvent_PutEventQueue(&event);
-#endif
-				break;
-
-			case SDL_EVENT_KEY_DOWN:
-				if (event.key.repeat) {
-					break;
-				}
-				if (ShortCut_CheckKeys(event.key.key, GuiEvent_ShortcutMod(event.key.mod), true)) {
-					ShortCut_ActKey();
-					break;
-				}
-#ifdef ENABLE_RENDERING_THREAD
-				Keymap_KeyDown(&event.key);
-#else
-				GuiEvent_PutEventQueue(&event);
-#endif
-				break;
-
-			case SDL_EVENT_KEY_UP:
-				if (ShortCut_CheckKeys(event.key.key, GuiEvent_ShortcutMod(event.key.mod), false)) {
-					break;
-				}
-#ifdef ENABLE_RENDERING_THREAD
-				Keymap_KeyUp(&event.key);
-#else
-				GuiEvent_PutEventQueue(&event);
-#endif
-				break;
-
-			default:
-				/* check special remote events */
-				if (event.type == SPECIAL_EVENT) {
-					switch (event.user.code) {
-						case SPECIAL_EVENT_PAUSE:
-							Main_PauseEmulation(false);
-							break;
-						case SPECIAL_EVENT_UNPAUSE:
-							Main_UnPauseEmulation();
-							break;
-#ifndef ENABLE_RENDERING_THREAD
-						case SPECIAL_EVENT_REPAINT:
-							Statusbar_Update(sdlscrn);
-							Screen_Repaint();
-							break;
-						case SPECIAL_EVENT_ND_DISPLAY:
-							nd_display_repaint();
-							break;
-						case SPECIAL_EVENT_HALT:
-							Main_HaltDialog();
-							break;
-#endif
-						default:
-							break;
+		case SDL_EVENT_MOUSE_BUTTON_UP:
+			if (ConfigureParams.Mouse.bEnableMacClick) {
+				if (event->button.button == SDL_BUTTON_LEFT) {
+					if (SDL_GetModState() & SDL_KMOD_CTRL) {
+						event->button.button = SDL_BUTTON_RIGHT;
 					}
-					break;
 				}
-				/* don't let unknown events delay event processing */
-				bContinueProcessing = true;
+			}
+			if (event->button.button == SDL_BUTTON_LEFT ||
+			    event->button.button == SDL_BUTTON_RIGHT) {
+				GuiEvent_PutEventQueue(event);
+			}
+			break;
+
+		case SDL_EVENT_MOUSE_WHEEL:
+			GuiEvent_PutEventQueue(event);
+			break;
+
+		case SDL_EVENT_KEY_DOWN:
+			if (event->key.repeat) {
 				break;
-		}
-	} while (bContinueProcessing || !(bEmulationActive || bQuitProgram));
+			}
+			if (ShortCut_CheckKeys(event->key.key, GuiEvent_ShortcutMod(event->key.mod), true)) {
+				ShortCut_ActKey();
+				break;
+			}
+			GuiEvent_PutEventQueue(event);
+			break;
+
+		case SDL_EVENT_KEY_UP:
+			if (ShortCut_CheckKeys(event->key.key, GuiEvent_ShortcutMod(event->key.mod), false)) {
+				break;
+			}
+			GuiEvent_PutEventQueue(event);
+			break;
+
+		default:
+			/* check special remote events */
+			if (event->type == SPECIAL_EVENT) {
+				switch (event->user.code) {
+					case SPECIAL_EVENT_PAUSE:
+						Main_PauseEmulation(false);
+						break;
+					case SPECIAL_EVENT_UNPAUSE:
+						Main_UnPauseEmulation();
+						break;
+					case SPECIAL_EVENT_REPAINT:
+						Gui_RequestRepaint();
+						break;
+					case SPECIAL_EVENT_ND_DISPLAY:
+						nd_display_repaint();
+						break;
+					case SPECIAL_EVENT_HALT:
+						Main_HaltDialog();
+						break;
+					case SPECIAL_EVENT_GUI:
+						Gui_HandleRequest(event->user.data1);
+						break;
+					default:
+						break;
+				}
+			}
+			break;
+	}
+}
+
+/* ----------------------------------------------------------------------- */
+/**
+ * SDL message handler, called from the main loop and from the loops that
+ * keep the window alive while a dialog is open. Waits for events until the
+ * next frame is due, handles them and draws the frame.
+ */
+void GuiEvent_EventHandler(void) {
+	SDL_Event event;
+	bool events;
+
+	events = SDL_WaitEventTimeout(&event, Gui_WaitTimeMs());
+	while (events) {
+		GuiEvent_HandleEvent(&event);
+		events = SDL_PollEvent(&event);
+	}
+	Gui_Frame();
+	Gui_RunPosted();
 }
 
 
 void UI_Init(void) {
-	/* Needed on maemo but useful also with normal X11 window managers for
-	 * window grouping when you have multiple Previous SDL windows open */
-	SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_IDENTIFIER_STRING, "com.sourceforge.previous");
+	/* Groups the windows (NeXTdimension screens) and names the program to
+	 * the desktop */
+	SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_IDENTIFIER_STRING, "uk.co.mw0mwz.previousturbo");
 
 	/* Init SDL's video subsystem. Note: Audio subsystem
 	   will be initialized later (failure not fatal). */
@@ -465,13 +456,12 @@ void UI_Init(void) {
 	{
 		Main_ErrorExit("Could not initialize the SDL library:", SDL_GetError(), -1);
 	}
-	SDLGui_Init();
+	GuiEvent_InitSpecialEvent();
 	Screen_Init();
 	Keymap_Init();
 }
 
 void UI_UnInit(void) {
-	SDLGui_UnInit();
 	Screen_UnInit();
 }
 

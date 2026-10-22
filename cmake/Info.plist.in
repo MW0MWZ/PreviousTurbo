@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleDisplayName</key>
+    <string>PreviousTurbo</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>sd</string>
+            </array>
+            <key>CFBundleTypeName</key>
+            <string>SCSI disk image</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+        </dict>
+        <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>od</string>
+            </array>
+            <key>CFBundleTypeName</key>
+            <string>Magneto-optical disk image</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+        </dict>
+        <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>fd</string>
+            </array>
+            <key>CFBundleTypeName</key>
+            <string>Floppy disk image</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+        </dict>
+        <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>bin</string>
+            </array>
+            <key>CFBundleTypeName</key>
+            <string>ROM image</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+        </dict>
+        <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>cfg</string>
+            </array>
+            <key>CFBundleTypeName</key>
+            <string>Settings file</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+        </dict>
+    </array>
+    <key>CFBundleExecutable</key>
+    <string>PreviousTurbo</string>
+    <key>CFBundleIconFile</key>
+    <string>Previous</string>
+    <key>CFBundleIdentifier</key>
+    <string>uk.co.mw0mwz.previousturbo</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>PreviousTurbo</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@PROJECT_VERSION@</string>
+    <key>CFBundleVersion</key>
+    <string>@PROJECT_VERSION@</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.developer-tools</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>Based on Previous by Andreas Grabher, Simon Schubiger, Gilles Fétis and others. GNU General Public License, version 2 or later.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>The emulated NeXT computer records from your audio input when its sound input is used.</string>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+</dict>
+</plist>

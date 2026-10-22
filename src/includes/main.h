@@ -13,7 +13,9 @@ extern "C" {
 #endif /* __cplusplus */
 
 /* Name and version for window title: */
-#define PROG_NAME "Previous 4.5"
+#define PROG_NAME "PreviousTurbo"
+/* The Previous release this is based on */
+#define PROG_NAME_PREVIOUS "Previous 4.5"
 
 #include "config.h"
 

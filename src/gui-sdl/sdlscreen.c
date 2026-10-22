@@ -13,13 +13,13 @@ const char SDLscreen_fileid[] = "Previous sdlscreen.c";
 #include "screen.h"
 #include "sdlscreen.h"
 #include "statusbar.h"
-#include "sdlstatusbar.h"
 #include "event.h"
 #include "dimension.hpp"
 #include "nd_sdl.hpp"
 #include "video.h"
 #include "keymap.h"
 #include "m68000.h"
+#include "gui.h"
 
 
 /* NeXT screen resolution */
@@ -27,7 +27,6 @@ const int NeXT_SCRN_W = 1120;
 const int NeXT_SCRN_H = 832;
 
 SDL_Window*   sdlWindow;
-SDL_Surface*  sdlscrn = NULL;        /* The SDL screen surface */
 
 /* extern for shortcuts */
 volatile bool bGrabMouse    = false; /* Grab the mouse cursor in the window */
@@ -41,41 +40,32 @@ static int width  = NeXT_SCRN_W;
 static int height = NeXT_SCRN_H;
 
 static SDL_Renderer* sdlRenderer;
-static SDL_Texture*  uiTexture;
 static SDL_Texture*  fbTexture;
 static SDL_Texture*  groupTexture[NUM_MONITORS];
-static SDL_FRect     uiRect;
 static SDL_FRect     fbRect;
 static SDL_FRect     groupRect[NUM_MONITORS];
-static SDL_AtomicInt blitUI;
-static SDL_Rect      statusBar;
 static SDL_Rect      saveWindowBounds; /* Window bounds before going fullscreen. Used to restore window size & position. */
 static SCREENMODE    saveScreenMode;   /* Save screen mode to restore on return from fullscreen */
 static SCREENMODE    initScreenMode;   /* Save screen mode present at last init */
 static int           initScreenWidth;  /* Save screen width at last init */
 static int           initScreenHeight; /* Save screen height at last init */
-static uint32_t      mask;             /* green screen mask for transparent UI areas */
-static void*         uiBuffer;         /* uiBuffer used for user interface texture */
-static SDL_SpinLock  uiBufferLock;     /* Lock for concurrent access to UI buffer between m68k thread and repainter */
-#ifdef ENABLE_RENDERING_THREAD
-static volatile bool doRepaint;        /* Repaint thread runs while true */
-static SDL_Thread*   repaintThread;
-#endif
+static float         initBarsHeight;   /* Save height of menu and status bars at last init */
+static bool          initDone;         /* Window size set at least once */
 
 
 static uint32_t BW2RGB[0x100][4];
 static uint32_t COL2RGB[0x10000];
 
-static uint32_t bw2rgb(SDL_Surface* surf, int bw) {
+static uint32_t bw2rgb(const SDL_PixelFormatDetails* fmt, int bw) {
 	int c = (~bw & 3) * 0x55;
-	return SDL_MapSurfaceRGB(surf, c, c, c);
+	return SDL_MapRGB(fmt, NULL, c, c, c);
 }
 
-static uint32_t col2rgb(SDL_Surface* surf, int col) {
+static uint32_t col2rgb(const SDL_PixelFormatDetails* fmt, int col) {
 	int r = ((col >> 12) & 0x0F) * 0x11;
 	int g = ((col >>  8) & 0x0F) * 0x11;
 	int b = ((col >>  4) & 0x0F) * 0x11;
-	return SDL_MapSurfaceRGB(surf, r, g, b);
+	return SDL_MapRGB(fmt, NULL, r, g, b);
 }
 
 /*
@@ -193,117 +183,67 @@ static bool blitScreen(int slot, SDL_Texture* tex) {
 }
 
 /*
- Blit user interface to texture.
+ Blit the NeXT framebuffer(s) to their textures. Returns true if any
+ texture was updated. Called from the main thread before a frame is drawn.
  */
-static void blitUserInterface(SDL_Texture* tex) {
-	void* pixels;
-	int   pitch;
-	SDL_LockTexture(tex, NULL, &pixels, &pitch);
-	SDL_LockSpinlock(&uiBufferLock);
-	memcpy(pixels, uiBuffer, height * pitch);
-	SDL_SetAtomicInt(&blitUI, 0);
-	SDL_UnlockSpinlock(&uiBufferLock);
-	SDL_UnlockTexture(tex);
+bool Screen_UpdatePictures(void) {
+	bool updated = false;
+	int i;
+
+	if (!bEmulationActive) {
+		return false;
+	}
+	if (initScreenMode == SCREEN_GROUP) {
+		for (i = 0; i < NUM_MONITORS; i++) {
+			if (groupTexture[i] && blitScreen(i * 2, groupTexture[i])) {
+				updated = true;
+			}
+		}
+	} else if (fbTexture) {
+		updated = blitScreen(ConfigureParams.Screen.nSingleModeSlot, fbTexture);
+	}
+	return updated;
 }
 
 /*
- Blits the NeXT framebuffer to the fbTexture, blends with the GUI surface and shows it.
+ The textures making up the emulated screen and where each goes, in
+ NeXT screen pixels within a screen_w x screen_h area. Returns the count.
  */
-static bool Screen_SingleRepaint(void) {
-	bool updateScreen = false;
+int Screen_GetPictures(SDL_Texture** tex, SDL_FRect* rects, int max) {
+	int i, n = 0;
 
-	/* Blit the NeXT framebuffer to texture */
-	if (bEmulationActive) {
-		updateScreen = blitScreen(ConfigureParams.Screen.nSingleModeSlot, fbTexture);
-	}
-
-	/* Copy UI surface to texture */
-	if (SDL_GetAtomicInt(&blitUI)) {
-		blitUserInterface(uiTexture);
-		updateScreen = true;
-	}
-
-	if (updateScreen) {
-		SDL_RenderClear(sdlRenderer);
-		/* Render NeXT framebuffer texture */
-		SDL_RenderTexture(sdlRenderer, fbTexture, NULL, &fbRect);
-		SDL_RenderTexture(sdlRenderer, uiTexture, NULL, &uiRect);
-		/* Sleeps until next VSYNC if enabled in ScreenInit */
-		SDL_RenderPresent(sdlRenderer);
-	}
-
-	return updateScreen;
-}
-
-static bool Screen_GroupRepaint(void) {
-	bool updateScreen = false;
-	int i;
-	
-	/* Blit the NeXT framebuffer to texture */
-	if (bEmulationActive) {
-		for (i = 0; i < NUM_MONITORS; i++) {
-			if (groupTexture[i]) {
-				if (blitScreen(i * 2, groupTexture[i])) {
-					updateScreen = true;
-				}
-			}
-		}
-	}
-	
-	/* Copy UI surface to texture */
-	if (SDL_GetAtomicInt(&blitUI)) {
-		blitUserInterface(uiTexture);
-		updateScreen = true;
-	}
-	
-	if (updateScreen) {
-		SDL_RenderClear(sdlRenderer);
-		/* Render NeXT framebuffer texture */
-		for (i = 0; i < NUM_MONITORS; i++) {
-			if (groupTexture[i]) {
-				SDL_RenderTexture(sdlRenderer, groupTexture[i], NULL, &groupRect[i]);
-			}
-		}
-		SDL_RenderTexture(sdlRenderer, uiTexture, NULL, &uiRect);
-		/* Sleeps until next VSYNC if enabled in ScreenInit */
-		SDL_RenderPresent(sdlRenderer);
-	}
-	
-	return updateScreen;
-}
-
-bool Screen_Repaint(void) {
 	if (initScreenMode == SCREEN_GROUP) {
-		return Screen_GroupRepaint();
-	}
-	return Screen_SingleRepaint();
-}
-
-#ifdef ENABLE_RENDERING_THREAD
-static int repainter(void* unused) {
-	SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_NORMAL);
-
-	/* Enter repaint loop */
-	while (doRepaint) {
-		if (!Screen_Repaint()) {
-			SDL_Delay(10);
+		for (i = 0; i < NUM_MONITORS && n < max; i++) {
+			if (groupTexture[i]) {
+				tex[n] = groupTexture[i];
+				rects[n] = groupRect[i];
+				n++;
+			}
 		}
+	} else if (fbTexture && max > 0) {
+		tex[n] = fbTexture;
+		rects[n] = fbRect;
+		n++;
 	}
-	return 0;
+	return n;
 }
-#endif
+
+SDL_Renderer* Screen_GetRenderer(void) {
+	return sdlRenderer;
+}
+
+/* Kept for the emulator's repaint requests: the next frame shows the screen. */
+bool Screen_Repaint(void) {
+	Gui_RequestRepaint();
+	return true;
+}
 
 /*-----------------------------------------------------------------------*/
 /**
  * Force repaint after window size or full screen change
  */
 static void Screen_ForceRepaint(void) {
-	SDL_SetAtomicInt(&blitUI, 1);
-#ifndef ENABLE_RENDERING_THREAD
-	if (!bEmulationActive) {
-		Screen_Repaint();
-	}
-#endif
+	Gui_RequestRepaint();
 }
 
 /*-----------------------------------------------------------------------*/
@@ -322,7 +262,7 @@ static void Screen_SetTitle(const char *title) {
  * Force things associated with changing between single and all screens.
  */
 static void Screen_ModeChanged(void) {
-	if (!sdlscrn) {
+	if (!sdlWindow) {
 		/* screen not yet initialized */
 		return;
 	}
@@ -351,15 +291,15 @@ static void Screen_GetWindowBounds(SDL_Rect* r) {
 
 	float maxscale = 1.0;
 	float scale    = 1.0;
+	float bars     = Gui_BarsHeight();
 
 	d = SDL_GetDisplayForWindow(sdlWindow);
 
 	r->x = SDL_WINDOWPOS_CENTERED_DISPLAY(d);
 	r->y = SDL_WINDOWPOS_CENTERED_DISPLAY(d);
-	r->w = width;
-	r->h = height;
 
-	if (width == initScreenWidth && abs(height - initScreenHeight) < NeXT_SCRN_H) {
+	/* Keep the picture's current scale if the screen size did not change much */
+	if (initDone && width == initScreenWidth && abs(height - initScreenHeight) < NeXT_SCRN_H) {
 		int x, y, w, h;
 		if (bInFullScreen) {
 			r->x = saveWindowBounds.x;
@@ -381,10 +321,8 @@ static void Screen_GetWindowBounds(SDL_Rect* r) {
 		if (SDL_GetWindowBordersSize(sdlWindow, &top, &left, &bottom, &right) == false) {
 			top = bottom = 50;
 			left = right = 25;
-		} else if (!ConfigureParams.Screen.bShowStatusbar) {
-			bottom += 24; /* make sure there is enough space to show statusbar */
 		}
-		hscale = (float)(usable.h - top - bottom) / height;
+		hscale = (float)(usable.h - top - bottom - bars) / height;
 		wscale = (float)(usable.w - left - right) / width;
 		maxscale = wscale < hscale ? wscale : hscale;
 	}
@@ -393,11 +331,11 @@ static void Screen_GetWindowBounds(SDL_Rect* r) {
 		r->x = SDL_WINDOWPOS_CENTERED_DISPLAY(d);
 		r->y = SDL_WINDOWPOS_CENTERED_DISPLAY(d);
 	}
-	if (scale > 0.0 && scale != 1.0) {
-		fprintf(stderr, "SDL screen scale: %.3f\n", scale);
-		r->w = (int)SDL_lroundf((float)r->w * scale);
-		r->h = (int)SDL_lroundf((float)r->h * scale);
+	if (scale <= 0.0) {
+		scale = 1.0;
 	}
+	r->w = (int)SDL_lroundf((float)width * scale);
+	r->h = (int)SDL_lroundf((float)height * scale + bars);
 }
 
 /*-----------------------------------------------------------------------*/
@@ -421,16 +359,9 @@ static SDL_Texture* Screen_CreateFramebufferTexture(SDL_PixelFormat format, int 
  * (Re-)initialise screen or handle mode change 
  */
 void Screen_Reset(void) {
-	int d, i;
+	int i;
 
 	SDL_PixelFormat format = SDL_PIXELFORMAT_BGRA32;
-
-#ifdef ENABLE_RENDERING_THREAD
-	if (doRepaint) {
-		doRepaint = false;
-		SDL_WaitThread(repaintThread, &d);
-	}
-#endif
 
 	/* Set initial window resolution */
 	if (ConfigureParams.Screen.nMode == SCREEN_GROUP) {
@@ -470,77 +401,23 @@ void Screen_Reset(void) {
 	width  = screen_w;
 	height = screen_h;
 
-	/* Grow to fit statusbar */
-	height += Statusbar_SetHeight(screen_w, screen_h);
-
-	/* Statusbar */
-	statusBar.x = 0;
-	statusBar.y = screen_h;
-	statusBar.w = screen_w;
-	statusBar.h = Statusbar_GetHeight();
-
-	/* User interface including statusbar */
-	uiRect.x = 0;
-	uiRect.y = 0;
-	uiRect.w = width;
-	uiRect.h = height;
-
-	/* Set new video mode only if necessary */
-	if (width != initScreenWidth || height != initScreenHeight) {
+	/* Set new window size only if necessary (the menu and status bars are
+	 * added by Screen_GetWindowBounds) */
+	if (!initDone || width != initScreenWidth || height != initScreenHeight ||
+	    Gui_BarsHeight() != initBarsHeight) {
 		SDL_Rect windowBounds;
-		uint32_t r, g, b, a;
 
 		fprintf(stderr, "SDL screen request: %d x %d (%s)\n", width, height, bInFullScreen ? "fullscreen" : "windowed");
 
 		Screen_GetWindowBounds(&windowBounds);
 
-		SDL_SetWindowAspectRatio(sdlWindow, (float)width/height, (float)width/height);
-
 		if (bInFullScreen) {
 			/* If we are in full screen change saved window sizes */
 			saveWindowBounds = windowBounds;
-			SDL_SetRenderLogicalPresentation(sdlRenderer, width, height, SDL_LOGICAL_PRESENTATION_LETTERBOX);
 		} else {
-			/* Set new window size */
-			SDL_SetRenderLogicalPresentation(sdlRenderer, width, height, SDL_LOGICAL_PRESENTATION_STRETCH);
 			SDL_SetWindowSize(sdlWindow, windowBounds.w, windowBounds.h);
 			SDL_SetWindowPosition(sdlWindow, windowBounds.x, windowBounds.y);
 		}
-
-		/* (Re-)initialise UI texture */
-		if (uiTexture) {
-			SDL_DestroyTexture(uiTexture);
-			uiTexture = NULL;
-		}
-		uiTexture = SDL_CreateTexture(sdlRenderer, format, SDL_TEXTUREACCESS_STREAMING, width, height);
-		if (!uiTexture) {
-			Main_ErrorExit("Failed to create texture:", SDL_GetError(), -1);
-		}
-		SDL_SetTextureBlendMode(uiTexture, SDL_BLENDMODE_BLEND);
-
-		/* Get color masks */
-		SDL_GetMasksForPixelFormat(format, &d, &r, &g, &b, &a);
-		mask = g | a;
-
-		/* (Re-)initialise UI surface */
-		if (sdlscrn) {
-			SDL_DestroySurface(sdlscrn);
-			sdlscrn = NULL;
-		}
-		sdlscrn = SDL_CreateSurface(width, height, format);
-		if (!sdlscrn) {
-			Main_ErrorExit("Could not set video mode:", SDL_GetError(), -2);
-		}
-
-		/* Clear UI with mask */
-		SDL_FillSurfaceRect(sdlscrn, NULL, mask);
-
-		/* Allocate buffer for copy routines */
-		if (uiBuffer) {
-			free(uiBuffer);
-			uiBuffer = NULL;
-		}
-		uiBuffer = calloc(1, sdlscrn->h * sdlscrn->pitch);
 	}
 
 	/* Handle mode change */
@@ -574,18 +451,8 @@ void Screen_Reset(void) {
 	initScreenMode   = ConfigureParams.Screen.nMode;
 	initScreenWidth  = width;
 	initScreenHeight = height;
-
-	/* Initialise statusbar and set visibility */
-	if (ConfigureParams.Screen.bShowStatusbar) {
-		Statusbar_Init(sdlscrn);
-		Statusbar_Update(sdlscrn);
-	}
-
-#ifdef ENABLE_RENDERING_THREAD
-	/* Start repaint thread */
-	doRepaint = true;
-	repaintThread = SDL_CreateThread(repainter, "[Previous] Screen at slot 0", NULL);
-#endif
+	initBarsHeight   = Gui_BarsHeight();
+	initDone         = true;
 
 	/* Make sure screen is painted in case emulation is paused */
 	Screen_ForceRepaint();
@@ -597,28 +464,30 @@ void Screen_Reset(void) {
  */
 void Screen_Init(void) {
 	int i;
+	const SDL_PixelFormatDetails* fmt;
 
 	SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
 	if (SDL_CreateWindowAndRenderer(PROG_NAME, width, height, flags, &sdlWindow, &sdlRenderer) == false) {
 		Main_ErrorExit("Failed to create window and renderer:", SDL_GetError(), -1);
 	}
-#ifdef ENABLE_RENDERING_THREAD
-	SDL_SetRenderVSync(sdlRenderer, 1);
-#endif
-
-	/* Initialise textures and screen surface */
-	Screen_Reset();
 
 	/* Setup lookup tables */
+	fmt = SDL_GetPixelFormatDetails(SDL_PIXELFORMAT_BGRA32);
 	for (i = 0; i < 0x100; i++) {
-		BW2RGB[i][0] = bw2rgb(sdlscrn, i>>6);
-		BW2RGB[i][1] = bw2rgb(sdlscrn, i>>4);
-		BW2RGB[i][2] = bw2rgb(sdlscrn, i>>2);
-		BW2RGB[i][3] = bw2rgb(sdlscrn, i>>0);
+		BW2RGB[i][0] = bw2rgb(fmt, i>>6);
+		BW2RGB[i][1] = bw2rgb(fmt, i>>4);
+		BW2RGB[i][2] = bw2rgb(fmt, i>>2);
+		BW2RGB[i][3] = bw2rgb(fmt, i>>0);
 	}
 	for (i = 0; i < 0x10000; i++) {
-		COL2RGB[SDL_Swap16BE(i)] = col2rgb(sdlscrn, i);
+		COL2RGB[SDL_Swap16BE(i)] = col2rgb(fmt, i);
 	}
+
+	/* The menus, dialogs and status bar */
+	Gui_Init(sdlWindow, sdlRenderer);
+
+	/* Initialise textures and window size */
+	Screen_Reset();
 
 	/* Set title, cursor visibility and mouse grab */
 	Screen_SetTitle(NULL);
@@ -640,14 +509,7 @@ void Screen_Init(void) {
  */
 void Screen_UnInit(void) {
 	int i;
-#ifdef ENABLE_RENDERING_THREAD
-	int s;
-	doRepaint = false; /* stop repaint thread */
-	SDL_WaitThread(repaintThread, &s);
-#endif
-	free(uiBuffer);
-	SDL_DestroySurface(sdlscrn);
-	SDL_DestroyTexture(uiTexture);
+	Gui_UnInit();
 	if (fbTexture) {
 		SDL_DestroyTexture(fbTexture);
 	}
@@ -674,7 +536,6 @@ void Screen_EnterFullScreen(void) {
 
 		SDL_GetWindowPosition(sdlWindow, &saveWindowBounds.x, &saveWindowBounds.y);
 		SDL_GetWindowSize(sdlWindow, &saveWindowBounds.w, &saveWindowBounds.h);
-		SDL_SetRenderLogicalPresentation(sdlRenderer, width, height, SDL_LOGICAL_PRESENTATION_LETTERBOX);
 		SDL_SetWindowFullscreen(sdlWindow, true);
 		SDL_SyncWindow(sdlWindow); /* To give monitor time to change to new resolution */
 
@@ -710,7 +571,6 @@ void Screen_ReturnFromFullScreen(void) {
 		SDL_SyncWindow(sdlWindow); /* To give monitor time to switch resolution */
 		SDL_SetWindowSize(sdlWindow, saveWindowBounds.w, saveWindowBounds.h);
 		SDL_SetWindowPosition(sdlWindow, saveWindowBounds.x, saveWindowBounds.y);
-		SDL_SetRenderLogicalPresentation(sdlRenderer, width, height, SDL_LOGICAL_PRESENTATION_STRETCH);
 
 		/* Return to windowed monitor mode */
 		if (saveScreenMode == SCREEN_ALL) {
@@ -781,8 +641,9 @@ void Screen_SizeChanged(void) {
 
 	if (!bInFullScreen) {
 		SDL_GetWindowSize(sdlWindow, NULL, &h);
-		nd_sdl_resize((float)h/height);
+		nd_sdl_resize(((float)h - Gui_BarsHeight())/height);
 	}
+	Gui_RequestRepaint();
 }
 
 /*-----------------------------------------------------------------------*/
@@ -790,7 +651,7 @@ void Screen_SizeChanged(void) {
  * Set visibilty of title bar.
  */
 void Screen_TitlebarChanged(void) {
-	if (sdlscrn && !bInFullScreen) {
+	if (sdlWindow && !bInFullScreen) {
 		SDL_SetWindowBordered(sdlWindow, ConfigureParams.Screen.bShowTitlebar);
 		nd_sdl_titlebar(ConfigureParams.Screen.bShowTitlebar);
 	}
@@ -803,7 +664,6 @@ void Screen_TitlebarChanged(void) {
 void Screen_StatusbarMessage(const char *msg, uint32_t msecs)
 {
 	Statusbar_AddMessage(msg, msecs);
-	Statusbar_Update(sdlscrn);
 }
 
 /*-----------------------------------------------------------------------*/
@@ -811,55 +671,7 @@ void Screen_StatusbarMessage(const char *msg, uint32_t msecs)
  * Wrapper for Statusbar_Update().
  */
 void Screen_StatusbarUpdate(void) {
-	Statusbar_Update(sdlscrn);
-}
-
-/*-----------------------------------------------------------------------*/
-/**
- * Check if we need to update full user interface or just the statusbar 
- * and copy user interface surface to buffer. Replace mask pixels with 
- * transparent pixels for blending with framebuffer texture.
- */
-void Screen_UpdateRects(SDL_Surface *screen, int numrects, SDL_Rect *rects) {
-	bool doUIblit = true;
-
-	while (numrects--) {
-		doUIblit = (rects->y < statusBar.y);
-		if (doUIblit) {
-			break;
-		}
-		rects++;
-	}
-
-	SDL_LockSurface(sdlscrn);
-	SDL_LockSpinlock(&uiBufferLock);
-	if (doUIblit) {
-		/* Copy user interface surface and replace mask pixels. */
-		int i;
-		uint32_t* src = (uint32_t*)sdlscrn->pixels;
-		uint32_t* dst = (uint32_t*)uiBuffer;
-		/* Primitive green-screen - would be nice if SDL had more blending modes. */
-		for (i = sdlscrn->w * sdlscrn->h; --i >= 0; src++) *dst++ = *src == mask ? 0 : *src;
-	} else {
-		/* Copy statusbar without transparent pixels. */
-		void* src = (uint8_t*)sdlscrn->pixels + statusBar.y * sdlscrn->pitch;
-		void* dst = (uint8_t*)uiBuffer + statusBar.y * sdlscrn->pitch;
-		memcpy(dst, src, statusBar.h * sdlscrn->pitch);
-	}
-	SDL_SetAtomicInt(&blitUI, 1);
-	SDL_UnlockSpinlock(&uiBufferLock);
-	SDL_UnlockSurface(sdlscrn);
-
-#ifndef ENABLE_RENDERING_THREAD
-	if (!bEmulationActive) {
-		Screen_Repaint();
-	}
-#endif
-}
-
-void Screen_UpdateRect(SDL_Surface *screen, int32_t x, int32_t y, int32_t w, int32_t h) {
-	SDL_Rect rect = { x, y, w, h };
-	Screen_UpdateRects(screen, 1, &rect);
+	Gui_RequestRepaint();
 }
 
 /* ----------------------------------------------------------------------- */
@@ -885,6 +697,8 @@ bool Screen_ShowCursor(bool show) {
  * Set mouse cursor to the center of the screen.
  */
 void Screen_CenterCursor(void) {
-	SDL_WarpMouseInWindow(sdlWindow, sdlscrn->w/2, sdlscrn->h/2);
+	float x = width / 2.0f, y = height / 2.0f;
+	Gui_ScreenToWindow(&x, &y);
+	SDL_WarpMouseInWindow(sdlWindow, x, y);
 	GuiEvent_WarpMouse();
 }
