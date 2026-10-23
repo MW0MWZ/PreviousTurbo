@@ -12,6 +12,8 @@ const char Paths_fileid[] = "Hatari paths.c";
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#include <SDL3/SDL_filesystem.h>
+
 #include "main.h"
 #include "file.h"
 #include "paths.h"
@@ -24,10 +26,11 @@ const char Paths_fileid[] = "Hatari paths.c";
 #endif
 #endif  /* WIN32 */
 
-/* PreviousTurbo's folder in the user's Documents folder: settings, and disk
- * images in diskImages */
+/* PreviousTurbo's folder in the user's Documents folder: settings, disk
+ * images in diskImages and the user's own ROMs in roms (as SiliconGhost's) */
 #define USER_DATA_DIR "PreviousTurbo"
 #define DISK_IMAGES_DIR "diskImages"
+#define ROMS_DIR "roms"
 
 #if defined(__APPLE__)
 	#define HATARI_HOME_DIR "Library/Application Support/Previous"
@@ -44,6 +47,7 @@ static char *sHatariHomeDir;  /* Hatari's home directory ($HOME/.hatari/) */
 static char *sScreenShotDir;  /* Default directory to use for screenshots */
 static char *sUserDataDir;    /* Documents/PreviousTurbo */
 static char *sDiskImagesDir;  /* Documents/PreviousTurbo/diskImages */
+static char *sRomsDir;        /* Documents/PreviousTurbo/roms */
 
 /**
  * Return pointer to current working directory string
@@ -92,6 +96,14 @@ const char *Paths_GetUserData(void)
 const char *Paths_GetDiskImagesDir(void)
 {
 	return sDiskImagesDir;
+}
+
+/**
+ * Return the folder ROM files are chosen from at first
+ */
+const char *Paths_GetRomsDir(void)
+{
+	return sRomsDir;
 }
 
 /**
@@ -311,16 +323,30 @@ static bool Paths_MakeDirs(char *path)
 }
 
 /**
- * Initialize PreviousTurbo's folder in the user's Documents folder (the same
- * place on every system) and its diskImages folder. Without one, the
- * settings stay in the old home directory.
+ * Initialize PreviousTurbo's folder in the user's Documents folder and its
+ * diskImages and roms folders. The Documents folder is the system's own:
+ * the known folder on Windows (wherever it has been moved), the XDG
+ * documents folder on Linux, ~/Documents on macOS. Without one, the settings
+ * stay in the old home directory.
  */
 static void Paths_InitUserData(void)
 {
 	char documents[FILENAME_MAX] = "";
+	const char *folder = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
 
+	if (folder && folder[0])
+	{
+		Str_Copy(documents, folder, sizeof(documents));
+		/* without its trailing separator */
+		while (strlen(documents) > 1 &&
+		       (documents[strlen(documents) - 1] == '/' || documents[strlen(documents) - 1] == '\\'))
+			documents[strlen(documents) - 1] = '\0';
+		/* an XDG documents folder set to the home folder itself: ~/Documents */
+		if (sUserHomeDir && strcmp(documents, sUserHomeDir) == 0)
+			documents[0] = '\0';
+	}
 #if defined(WIN32)
-	if (SHGetFolderPathA(NULL, CSIDL_PERSONAL, NULL, 0, documents) != S_OK)
+	if (!documents[0] && SHGetFolderPathA(NULL, CSIDL_PERSONAL, NULL, 0, documents) != S_OK)
 		documents[0] = '\0';
 #endif
 	if (!documents[0] && sUserHomeDir && sUserHomeDir[0])
@@ -340,6 +366,9 @@ static void Paths_InitUserData(void)
 	sDiskImagesDir = Str_Alloc(FILENAME_MAX);
 	snprintf(sDiskImagesDir, FILENAME_MAX, "%s%c%s", sUserDataDir, PATHSEP, DISK_IMAGES_DIR);
 	Paths_MakeDirs(sDiskImagesDir);
+	sRomsDir = Str_Alloc(FILENAME_MAX);
+	snprintf(sRomsDir, FILENAME_MAX, "%s%c%s", sUserDataDir, PATHSEP, ROMS_DIR);
+	Paths_MakeDirs(sRomsDir);
 }
 
 /**
@@ -421,4 +450,5 @@ void Paths_UnInit(void)
 	Str_Free(sScreenShotDir);
 	Str_Free(sUserDataDir);
 	Str_Free(sDiskImagesDir);
+	Str_Free(sRomsDir);
 }

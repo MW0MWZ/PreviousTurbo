@@ -13,6 +13,8 @@
 
 const char CycInt_fileid[] = "Previous cycInt.c";
 
+#include <limits.h>
+
 #include "main.h"
 #include "cycInt.h"
 #include "configuration.h"
@@ -200,12 +202,13 @@ void CycInt_AddTimeEvent(uint64_t RealTime, uint64_t FastTime, event_id i) {
 	if (EventList[i].type) {
 		CycInt_RemovePendingEvent(i);
 	}
-	if (ConfigureParams.System.bRealtime) {
+	/* Turbo keeps time by the host's clock, as realtime mode does */
+	if (ConfigureParams.System.bRealtime || ConfigureParams.System.bFullSpeed) {
 		RealTime = FastTime ? FastTime : RealTime;
 		EventList[i].type = TYPE_TIME;
 		EventList[i].time = Timing_GetTime() + RealTime;
 		nTimeFirst = CycInt_AddEvent(nTimeFirst, i);
-		if (RealTime < CHECK_INTERVAL && i == nTimeFirst) {
+		if ((RealTime < CHECK_INTERVAL && i == nTimeFirst) || nCheckCycles == UINT64_MAX) {
 			nCheckCycles = nCyclesMainCounter + RealTime * ConfigureParams.System.nCpuFreq;
 		}
 	} else {
@@ -218,18 +221,28 @@ void CycInt_UpdateTimeEvent(uint64_t RealTime, uint64_t FastTime, event_id i) {
 	if (EventList[i].type) {
 		CycInt_RemovePendingEvent(i);
 	}
-	if (ConfigureParams.System.bRealtime) {
+	if (ConfigureParams.System.bRealtime || ConfigureParams.System.bFullSpeed) {
 		RealTime = FastTime ? FastTime : RealTime;
 		nTimeNow = Timing_GetTime();
+		/* (also when the time was counted in cycles, before Turbo) */
 		if ((nTimeNow - EventList[i].time) > (RealTime >> 1)) {
 			EventList[i].time = nTimeNow;
 		}
 		EventList[i].type = TYPE_TIME;
 		EventList[i].time += RealTime;
 		nTimeFirst = CycInt_AddEvent(nTimeFirst, i);
+		if (nCheckCycles == UINT64_MAX) {
+			nCheckCycles = nCyclesMainCounter;
+		}
 	} else {
+		uint64_t period = RealTime * ConfigureParams.System.nCpuFreq;
+		/* a whole period late: the time was real time, before Turbo
+		 * was switched off */
+		if (EventList[i].time + 2 * period < nCyclesMainCounter) {
+			EventList[i].time = nCyclesMainCounter;
+		}
 		EventList[i].type = TYPE_CYCLES;
-		EventList[i].time += RealTime * ConfigureParams.System.nCpuFreq;
+		EventList[i].time += period;
 		nCyclesFirst = CycInt_AddEvent(nCyclesFirst, i);
 	}
 }
@@ -239,16 +252,64 @@ void CycInt_UpdateTimeEvent(uint64_t RealTime, uint64_t FastTime, event_id i) {
  * Convert microseconds to cycles and set or update cycle event.
  */
 void CycInt_AddCycleTimeEvent(uint64_t CycleTime, uint64_t FastTime, event_id i) {
-	if (ConfigureParams.System.bRealtime && FastTime) {
+	if ((ConfigureParams.System.bRealtime || ConfigureParams.System.bFullSpeed) && FastTime) {
 		CycleTime = FastTime;
 	}
 	CycInt_AddCyclesEvent(CycleTime * ConfigureParams.System.nCpuFreq, i);
 }
 void CycInt_UpdateCycleTimeEvent(uint64_t CycleTime, uint64_t FastTime, event_id i) {
-	if (ConfigureParams.System.bRealtime && FastTime) {
+	if ((ConfigureParams.System.bRealtime || ConfigureParams.System.bFullSpeed) && FastTime) {
 		CycleTime = FastTime;
 	}
 	CycInt_UpdateCyclesEvent(CycleTime * ConfigureParams.System.nCpuFreq, i);
+}
+
+/*-----------------------------------------------------------------------*/
+/**
+ * Turbo: the CPU is stopped until an interrupt. Events counted in cycles come
+ * at once (the cycles are not counted up to them); until the next one in
+ * time, the host sleeps, and the time counted in cycles moves on by as long,
+ * so the guest's clocks keep to real time.
+ */
+uint64_t CycInt_IdleCycles;  /* cycles added by CycInt_IdleSkip */
+
+void CycInt_IdleSkip(void) {
+	uint64_t target = EventList[nCyclesFirst].time;
+	uint64_t timed = UINT64_MAX;
+	int64_t us = 0;
+
+	if (nTimeFirst) {
+		us = EventList[nTimeFirst].time - Timing_GetTime();
+		if (us < 0) {
+			us = 0;
+		}
+		if (!Timing_IsRealtime()) {
+			timed = nCyclesMainCounter + (uint64_t)(us * Timing_CyclesPerUs());
+		}
+	}
+	if (target != UINT64_MAX && target > nCyclesMainCounter && target <= timed) {
+		/* an event counted in cycles first */
+	} else if (nTimeFirst) {
+		int64_t slept = Timing_Idle(us);
+		nCheckCycles = nCyclesMainCounter;   /* look at the time again next */
+		if (timed == UINT64_MAX) {
+			return;
+		}
+		target = slept ? nCyclesMainCounter + (uint64_t)(slept * Timing_CyclesPerUs()) : timed;
+		if (target > timed) {
+			target = timed;
+		}
+	} else {
+		return;
+	}
+	if (target <= nCyclesMainCounter) {
+		return;
+	}
+	if (target - nCyclesMainCounter > INT_MAX) {
+		target = nCyclesMainCounter + INT_MAX;
+	}
+	CycInt_IdleCycles += target - nCyclesMainCounter;
+	CycInt_AddCycles((int)(target - nCyclesMainCounter));
 }
 
 /*-----------------------------------------------------------------------*/

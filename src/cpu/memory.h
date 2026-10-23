@@ -22,6 +22,11 @@ extern int jit_n_addr_unsafe;
 #define call_mem_put_func(func, addr, v) ((*func)(addr, v))
 
 extern uae_u8* NEXTVideo;
+
+/* Which 512 byte blocks of video memory were written since the screen last
+ * converted them: set by the CPU, read and cleared by the screen */
+#define VRAM_DIRTY_BLOCKS 8192
+extern volatile uae_u8 vram_dirty[VRAM_DIRTY_BLOCKS];
 extern uae_u8* NEXTRam;
 extern uae_u8* NEXTRom;
 extern uae_u8* NEXTIo;

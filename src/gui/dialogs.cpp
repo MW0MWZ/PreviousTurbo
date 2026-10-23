@@ -123,7 +123,7 @@ void run_on_main(std::function<void()> fn, bool wait) {
 
 // A path with Browse... (and Default) buttons, editing a configuration string.
 void path_row(const char* id, char* path, std::size_t size, Pick kind, const char* default_path,
-              std::vector<FileFilter> filters = {}) {
+              std::vector<FileFilter> filters = {}, Place place = Place::Disks) {
     ImGui::PushID(id);
     std::string text = path;
     ImGui::SetNextItemWidth(360 * st().scale);
@@ -132,7 +132,7 @@ void path_row(const char* id, char* path, std::size_t size, Pick kind, const cha
     if (ImGui::Button("Browse...")) {
         choose(kind, path, std::move(filters), [path, size](const std::string& chosen) {
             if (!chosen.empty()) SDL_strlcpy(path, chosen.c_str(), size);
-        });
+        }, place);
     }
     if (default_path) {
         ImGui::SameLine();
@@ -175,11 +175,14 @@ void draw_dialogs() {
                 "Settings", "Full screen on/off", "Lock/unlock mouse", "Cold reset", "Save screenshot",
                 "Sound recording on/off", "Sound on/off", "68k debugger", "i860 debugger", "Pause",
                 "Quit", "Next screen", "Status bar on/off", "Title bar on/off"};
+            const std::string release = std::string("Ctrl+") + kAlt + "+" +
+                Keymap_GetKeyName(ConfigureParams.Shortcut.withModifier[SHORTCUT_MOUSEGRAB]);
             if (ConfigureParams.Mouse.bEnableAutoGrab) {
                 ImGui::TextUnformatted("Click the screen to lock the mouse into the window for the NeXT;");
-                ImGui::TextUnformatted("Ctrl-click releases it.");
+                ImGui::Text("%s releases it.", release.c_str());
             } else {
-                ImGui::TextUnformatted("Lock the mouse into the window with View > Capture Mouse.");
+                ImGui::Text("Lock the mouse into the window with View > Capture Mouse; %s releases it.",
+                            release.c_str());
             }
             ImGui::Spacing();
             if (ImGui::BeginTable("##keys", 2, ImGuiTableFlags_SizingFixedFit)) {
@@ -253,7 +256,7 @@ void DlgMissing_Rom(const char* type, char* imgname, const char* defname, bool* 
         ImGui::Text("%s: ROM file not found!", what.c_str());
         ImGui::TextUnformatted("Please select a valid ROM file:");
         path_row("rom", imgname, FILENAME_MAX, Pick::Open, def.c_str(),
-                 {{"ROM images", "bin;BIN;rom"}, {"All files", "*"}});
+                 {{"ROM images", "bin;BIN;rom"}, {"All files", "*"}}, Place::Roms);
         ImGui::Spacing();
         if (ImGui::Button("Select", ImVec2(button_w(), 0))) self.done = true;
         if (*enabled) {
@@ -308,7 +311,7 @@ void DlgMissing_Dir(const char* type, char* dirname, const char* defname) {
     m->body = [what, def, dirname](Modal& self) {
         ImGui::Text("%s directory not found!", what.c_str());
         ImGui::TextUnformatted("Please select a valid directory:");
-        path_row("dir", dirname, FILENAME_MAX, Pick::Folder, def.c_str());
+        path_row("dir", dirname, FILENAME_MAX, Pick::Folder, def.c_str(), {}, Place::Base);
         ImGui::Spacing();
         if (ImGui::Button("Select", ImVec2(button_w(), 0))) self.done = true;
         ImGui::SameLine();

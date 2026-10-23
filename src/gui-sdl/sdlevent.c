@@ -136,8 +136,13 @@ void GuiEvent_InitSpecialEvent(void) {
 /**
  * Send special events. Called from emulator threads.
  **/
+static SDL_AtomicInt repaintPending; /* a repaint event is on its way */
+
 void GuiEvent_SendSpecialEvent(int type) {
 	SDL_Event event;
+	if (type == SPECIAL_EVENT_REPAINT && !SDL_CompareAndSwapAtomicInt(&repaintPending, 0, 1)) {
+		return;  /* the one on its way does */
+	}
 	event.type = SPECIAL_EVENT;
 	event.user.code = type;
 	SDL_PushEvent(&event);
@@ -338,18 +343,10 @@ static void GuiEvent_HandleEvent(SDL_Event *event) {
 				}
 			}
 			if (event->button.button == SDL_BUTTON_LEFT) {
-				if (ConfigureParams.Mouse.bEnableAutoGrab) {
-					if (bGrabMouse) {
-						if (SDL_GetModState() & SDL_KMOD_CTRL) {
-							bGrabMouse = false;
-							Screen_SetMouseGrab(bGrabMouse);
-							break;
-						}
-					} else {
-						bGrabMouse = true;
-						Screen_SetMouseGrab(bGrabMouse);
-						break;
-					}
+				if (ConfigureParams.Mouse.bEnableAutoGrab && !bGrabMouse) {
+					bGrabMouse = true;
+					Screen_SetMouseGrab(bGrabMouse);
+					break;
 				}
 				GuiEvent_PutEventQueue(event);
 			}
@@ -406,6 +403,7 @@ static void GuiEvent_HandleEvent(SDL_Event *event) {
 						Main_UnPauseEmulation();
 						break;
 					case SPECIAL_EVENT_REPAINT:
+						SDL_SetAtomicInt(&repaintPending, 0);
 						Gui_RequestRepaint();
 						break;
 					case SPECIAL_EVENT_ND_DISPLAY:

@@ -26,8 +26,12 @@ enum {
 
 extern void        Timing_Pause(bool pause);
 extern uint64_t    Timing_GetTime(void);
+extern bool        Timing_IsRealtime(void);
+extern int64_t     Timing_Idle(int64_t us);
+extern double      Timing_CyclesPerUs(void);
 extern void        Timing_GetTimes(uint64_t* realTime, uint64_t* hostTime);
 extern void        Timing_Sync(void);
+extern volatile uint64_t Timing_WaitedUs;
 extern uint64_t    Timing_GetSaveTime(void);
 extern time_t      Timing_GetUnixTime(void);
 extern void        Timing_SetUnixTime(time_t now);

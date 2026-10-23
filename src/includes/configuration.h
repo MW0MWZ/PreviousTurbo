@@ -374,6 +374,8 @@ typedef struct
   FPUTYPE n_FPUType;
   bool bCompatibleFPU;            /* More compatible FPU */
   bool bMMU;                      /* TRUE if MMU is enabled */
+  bool bFullSpeed;                /* Turbo: as fast as the host can go */
+  bool bJIT;                      /* Turbo: the 68040's code compiled for the host */
 } CNF_SYSTEM;
 
 /* NeXT Dimension configuration */

@@ -18,23 +18,42 @@ PreviousTurbo is at its very beginning. It is based on Previous 4.5 (SVN trunk
 revision 1858). So far:
 
 - **A new window.** Menus (Machine, Media, View, Help), a status bar with the
-  drive, network, DSP and NeXTdimension lights, and a tabbed Settings window
+  drive, network, DSP and NeXTdimension lights and the speed (how many times
+  as fast as the real CPU it runs when busy), and a tabbed Settings window
   replace the original full-screen dialogs. Every option of the original
   dialogs is kept. On macOS the menus are in the system menu bar.
 - **Disks while running.** The Media menu inserts and ejects magneto-optical,
   floppy and SCSI CD-ROM disks without opening the settings.
-
-The emulation itself is still that of Previous 4.5.
+- **Turbo.** The Turbo button in the status bar (also Machine > Turbo and
+  Settings > Machine) runs the CPU as fast as the host can go, with fast disk
+  transfers and a page cache in front of the 68040 MMU, while the machine's
+  clocks keep to real time, as in SiliconGhost: the guest's time passes as
+  the host's does, so its clock stays right and its own waits take as long
+  as on the real machine. Programs run at the host's full speed; the
+  kernel's code at half of it, and at most 12 times the real CPU's, so that
+  the time it counts never falls behind (OPENSTEP reads its microsecond
+  counter on the assumption that it does not jump). With Turbo off the
+  emulation is that of Previous 4.5.
+- **JIT.** With Turbo, the 68040's code is compiled for the host's processor
+  as it runs, on x86-64 (Linux, macOS, Windows) and AArch64 (macOS, Linux),
+  with the MMU, faults and self-modifying code handled as before; anything it
+  does not compile runs as in the interpreter. It can be switched off in
+  Settings > Machine, next to Turbo.
+- **Clock.** The real-time clock keeps the host's time, as on battery: it is
+  set from the host's clock at power on and moves only when the guest sets
+  it. OPENSTEP 4.2 takes the date of its disk instead when the clock differs
+  from it by more than 90 days ("preposterous time in Real Time Clock"), as
+  after a long time unused; set the date in OPENSTEP once, and from the next
+  start it follows the host's clock.
+- **Cheaper screen updates.** Only the parts of the screen that changed are
+  converted and drawn, and nothing is drawn when nothing changed.
 
 ## Plans
 
-- **Pacing.** A mode that runs the guest as fast as the host allows, with
-  idle-loop skipping and fast disk and magneto-optical transfers.
-- **CPU.** A faster 68040 MMU and FPU path, then a just-in-time compiler for the
-  68040, with MMU support, on x86-64 and AArch64 hosts.
+- **CPU.** More of the 68040's instructions compiled by the JIT, and a
+  faster FPU path.
 - **NeXTdimension.** A much faster i860.
-- **Display and sound.** Cheaper screen updates and steadier audio at high
-  speeds.
+- **Sound.** Steadier audio at high speeds.
 
 Anything that departs from the behaviour of real hardware for the sake of speed
 will be an option, so the accurate behaviour of Previous stays available.
@@ -46,15 +65,19 @@ model, memory, ROMs, disks, network and so on. The machine pauses while the
 Settings window is open; **OK** applies the changes (asking first if the machine
 has to be reset) and saves them, **Cancel** leaves everything as it was.
 
-The settings are kept in **Documents/PreviousTurbo/settings.cfg**, in the
-same place on macOS, Windows and Linux, and **Documents/PreviousTurbo/diskImages**
-is a place for your disk images (the file choosers start there). The first
-time, PreviousTurbo starts from Previous's settings if you have them. The
-NeXT ROMs come with PreviousTurbo and stay with the program. CD-ROM images can
+PreviousTurbo keeps its files in **PreviousTurbo** in your Documents folder
+(`~/Documents/PreviousTurbo` on macOS and Linux, or the documents folder XDG
+names; `Documents\PreviousTurbo` on Windows, wherever Documents has been
+moved), made on first start. It holds the settings, **settings.cfg**, and
+the folders **diskImages**, for disk, magneto-optical, floppy and CD-ROM
+images, and **roms**, for ROMs of your own; the file choosers start in the
+matching folder. The first time, PreviousTurbo starts from Previous's
+settings if you have them. The NeXT ROMs come with PreviousTurbo and stay
+with the program. CD-ROM images can
 be plain (.iso) or raw (the .bin of a .bin/.cue pair).
 
-Click the emulated screen to lock the mouse into the window; Ctrl-click
-releases it. Shortcuts are **Ctrl+Alt** and a letter (Ctrl+Option on a Mac),
+Click the emulated screen to lock the mouse into the window; **Ctrl+Alt+G**
+(Ctrl+Option+G on a Mac) releases it, as does switching to another window. Shortcuts are **Ctrl+Alt** and a letter (Ctrl+Option on a Mac),
 shown in the menus; **Help > Keyboard and Mouse** lists them, and
 **Settings > Keyboard** changes them.
 

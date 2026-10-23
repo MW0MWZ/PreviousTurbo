@@ -90,6 +90,7 @@
 #define CPUEMU_24 /* 68060 "cycle-exact" + blitter */
 #define CPUEMU_25 /* 68040 "cycle-exact" + blitter */
 #define CPUEMU_31 /* Aranym 68040 MMU */
+#define CPUEMU_36 /* PreviousTurbo: 68040 MMU, block cache */
 #define CPUEMU_32 /* Previous 68030 MMU */
 #define CPUEMU_33 /* 68060 MMU */
 #define CPUEMU_34 /* 68030 MMU + cache */

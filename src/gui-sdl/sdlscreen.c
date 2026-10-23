@@ -69,20 +69,69 @@ static uint32_t col2rgb(const SDL_PixelFormatDetails* fmt, int col) {
 }
 
 /*
+ The main screen is converted where its video memory changed: the rows from
+ first to last. All of it after the texture is made or the video is turned
+ back on.
+ */
+static bool fbConvertAll = true;  /* convert the whole picture next time */
+static bool fbVideoOn;            /* the video was on at the last conversion */
+
+/* Bytes per row of the main screen's video memory */
+static int vramRowBytes(void) {
+	if (ConfigureParams.System.bColor) {
+		return (NeXT_SCRN_W + (ConfigureParams.System.bTurbo ? 0 : 32)) * 2;
+	}
+	return NeXT_SCRN_W / 4 + (ConfigureParams.System.bTurbo ? 0 : 32 / 4);
+}
+
+/* The rows written since the last call; false if none. Each block is
+ cleared before its rows are converted, so a write meanwhile is seen next
+ time. */
+static bool vramDirtyRows(int* first, int* last) {
+	int stride = vramRowBytes();
+	int blocks = (stride * NeXT_SCRN_H + 511) >> 9;
+	int b;
+
+	*first = NeXT_SCRN_H;
+	*last  = -1;
+	for (b = 0; b < blocks && b < VRAM_DIRTY_BLOCKS; b++) {
+		if (vram_dirty[b]) {
+			int top    = (b << 9) / stride;
+			int bottom = ((b << 9) + 511) / stride;
+			vram_dirty[b] = 0;
+			if (top < *first) *first = top;
+			if (bottom > *last) *last = bottom;
+		}
+	}
+	if (*last >= NeXT_SCRN_H) {
+		*last = NeXT_SCRN_H - 1;
+	}
+	return *last >= *first;
+}
+
+static void vramClearDirty(void) {
+	int b;
+	for (b = 0; b < VRAM_DIRTY_BLOCKS; b++) {
+		vram_dirty[b] = 0;
+	}
+}
+
+/*
  BW format is 2 bit per pixel
  */
-static void blitBW(SDL_Texture* tex) {
+static void blitBW(SDL_Texture* tex, int first, int last) {
 	void* pixels;
 	uint8_t* src;
 	uint8_t* dst;
 	int pitch, src_padding, dst_padding, x, y;
+	SDL_Rect rows = { 0, first, NeXT_SCRN_W, last - first + 1 };
 
-	SDL_LockTexture(tex, NULL, &pixels, &pitch);
-	src = NEXTVideo;
-	dst = (uint8_t*)pixels;
+	SDL_LockTexture(tex, &rows, &pixels, &pitch);
 	src_padding = ConfigureParams.System.bTurbo ? 0 : (32 / 4);
+	src = NEXTVideo + first * (NeXT_SCRN_W / 4 + src_padding);
+	dst = (uint8_t*)pixels;
 	dst_padding = pitch - NeXT_SCRN_W * 4;
-	for (y = 0; y < NeXT_SCRN_H; y++) {
+	for (y = first; y <= last; y++) {
 		for (x = 0; x < NeXT_SCRN_W / 4; x++) {
 			memcpy(dst, BW2RGB[*src++], 16);
 			dst += 16;
@@ -96,18 +145,19 @@ static void blitBW(SDL_Texture* tex) {
 /*
  Color format is 4 bit per pixel, big-endian: RGBX
  */
-static void blitColor(SDL_Texture* tex) {
+static void blitColor(SDL_Texture* tex, int first, int last) {
 	void* pixels;
 	uint16_t* src;
 	uint32_t* dst;
 	int pitch, src_padding, dst_padding, x, y;
+	SDL_Rect rows = { 0, first, NeXT_SCRN_W, last - first + 1 };
 
-	SDL_LockTexture(tex, NULL, &pixels, &pitch);
-	src = (uint16_t*)NEXTVideo;
-	dst = (uint32_t*)pixels;
+	SDL_LockTexture(tex, &rows, &pixels, &pitch);
 	src_padding = ConfigureParams.System.bTurbo ? 0 : 32;
+	src = (uint16_t*)NEXTVideo + first * (NeXT_SCRN_W + src_padding);
+	dst = (uint32_t*)pixels;
 	dst_padding = pitch / 4 - NeXT_SCRN_W;
-	for (y = 0; y < NeXT_SCRN_H; y++) {
+	for (y = first; y <= last; y++) {
 		for (x = 0; x < NeXT_SCRN_W; x++) {
 			*dst++ = COL2RGB[*src++];
 		}
@@ -167,14 +217,26 @@ static bool blitScreen(int slot, SDL_Texture* tex) {
 		}
 	} else {
 		if (NEXTVideo) {
-			if (Video_Enabled()) {
-				if (ConfigureParams.System.bColor) {
-					blitColor(tex);
-				} else {
-					blitBW(tex);
+			int first = 0, last = NeXT_SCRN_H - 1;
+			if (!Video_Enabled()) {
+				if (!fbVideoOn && !fbConvertAll) {
+					return false;
 				}
-			} else {
 				Screen_Blank(tex);
+				fbVideoOn = fbConvertAll = false;
+				return true;
+			}
+			if (fbConvertAll || !fbVideoOn) {
+				vramClearDirty();
+				fbConvertAll = false;
+				fbVideoOn = true;
+			} else if (!vramDirtyRows(&first, &last)) {
+				return false;  /* nothing changed */
+			}
+			if (ConfigureParams.System.bColor) {
+				blitColor(tex, first, last);
+			} else {
+				blitBW(tex, first, last);
 			}
 			return true;
 		}
@@ -184,7 +246,7 @@ static bool blitScreen(int slot, SDL_Texture* tex) {
 
 /*
  Blit the NeXT framebuffer(s) to their textures. Returns true if any
- texture was updated. Called from the main thread before a frame is drawn.
+ texture changed. Called from the main thread before a frame is drawn.
  */
 bool Screen_UpdatePictures(void) {
 	bool updated = false;
@@ -200,6 +262,11 @@ bool Screen_UpdatePictures(void) {
 			}
 		}
 	} else if (fbTexture) {
+		static int lastSlot = -1;  /* shown in fbTexture */
+		if (ConfigureParams.Screen.nSingleModeSlot != lastSlot) {
+			lastSlot = ConfigureParams.Screen.nSingleModeSlot;
+			fbConvertAll = true;
+		}
 		updated = blitScreen(ConfigureParams.Screen.nSingleModeSlot, fbTexture);
 	}
 	return updated;
@@ -350,6 +417,7 @@ static SDL_Texture* Screen_CreateFramebufferTexture(SDL_PixelFormat format, int 
 		Main_ErrorExit("Failed to create texture:", SDL_GetError(), -1);
 	}
 	SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_NONE);
+	fbConvertAll = true;
 	
 	return tex;
 }
@@ -603,12 +671,14 @@ void Screen_SetMouseGrab(bool grab) {
 			SDL_SetWindowRelativeMouseMode(sdlWindow, true);
 			SDL_SetWindowKeyboardGrab(sdlWindow, true);
 			SDL_SetWindowMouseGrab(sdlWindow, true);
-			if (ConfigureParams.Mouse.bEnableAutoGrab) {
-				Screen_SetTitle("Mouse is locked. Ctrl-click to release.");
-			} else {
+			{
 				char message[64];
-				
-				snprintf(message, sizeof(message), "Mouse is locked. Press ctrl-alt-%s to release.", 
+#ifdef __APPLE__
+				const char *alt = "Option";
+#else
+				const char *alt = "Alt";
+#endif
+				snprintf(message, sizeof(message), "Mouse is locked. Ctrl+%s+%s releases it.", alt,
 						 Keymap_GetKeyName(ConfigureParams.Shortcut.withModifier[SHORTCUT_MOUSEGRAB]));
 				Screen_SetTitle(message);
 			}

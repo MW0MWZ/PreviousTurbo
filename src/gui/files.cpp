@@ -47,13 +47,29 @@ void SDLCALL on_chosen(void* userdata, const char* const* files, int) {
     g_answers.push_back(Answer{std::move(req->done), std::move(path)});
 }
 
+// Does path lie in the program's own data folder (the ROMs that come with it)?
+bool in_data_dir(const std::string& path) {
+    const char* data = Paths_GetDataDir();
+    if (!data || !*data || path.empty()) return false;
+    std::error_code ec;
+    const auto a = std::filesystem::weakly_canonical(std::filesystem::path(data), ec);
+    const auto b = std::filesystem::weakly_canonical(std::filesystem::path(path), ec);
+    if (ec) return false;
+    const auto rel = b.lexically_relative(a);
+    return !rel.empty() && *rel.begin() != "..";
+}
+
 }  // namespace
 
 void choose(Pick kind, const std::string& start, std::vector<FileFilter> filters,
-            std::function<void(const std::string&)> done) {
+            std::function<void(const std::string&)> done, Place place) {
     auto* req = new Request{std::move(filters), {}, start, std::move(done)};
-    // With nothing chosen yet, start in Documents/PreviousTurbo/diskImages.
-    if (req->start.empty() && Paths_GetDiskImagesDir()) req->start = std::string(Paths_GetDiskImagesDir()) + PATHSEP;
+    // With nothing chosen yet (or a ROM that came with the program), start in
+    // the matching folder of Documents/PreviousTurbo, as SiliconGhost does.
+    const char* folder = place == Place::Roms ? Paths_GetRomsDir()
+                         : place == Place::Base ? Paths_GetUserData() : Paths_GetDiskImagesDir();
+    if ((req->start.empty() || (place == Place::Roms && in_data_dir(req->start))) && folder)
+        req->start = std::string(folder) + PATHSEP;
     for (const FileFilter& f : req->filters) req->sdl_filters.push_back(SDL_DialogFileFilter{f.name, f.pattern});
     // Start in the folder of what is chosen now (or the file itself, for saving).
     if (kind != Pick::Save && !req->start.empty() && req->start.back() != '/' && req->start.back() != '\\') {
@@ -70,13 +86,13 @@ void choose(Pick kind, const std::string& start, std::vector<FileFilter> filters
     }
 }
 
-std::string choose_now(Pick kind, const std::string& start, std::vector<FileFilter> filters) {
+std::string choose_now(Pick kind, const std::string& start, std::vector<FileFilter> filters, Place place) {
     bool answered = false;
     std::string result;
     choose(kind, start, std::move(filters), [&](const std::string& path) {
         result = path;
         answered = true;
-    });
+    }, place);
     run_modal([&] { return !answered; });
     return result;
 }

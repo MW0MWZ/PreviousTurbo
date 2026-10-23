@@ -70,6 +70,10 @@ std::vector<MenuEntry> menus();
 // The keys of a shortcut action as shown in menus ("Ctrl+Alt+F", "F12"), or "".
 std::string shortcut_keys(int shortcut);
 
+// Turbo on or off: the machine runs as fast as the host can go, with fast
+// disks, until switched off again.
+void toggle_turbo();
+
 // --- Status bar (statusbar.cpp) ---
 void draw_status_bar();
 // True if what the status bar shows changed since the last call.
@@ -85,6 +89,9 @@ bool settings_open();
 
 // --- File choosers (files.cpp) ---
 enum class Pick { Open, Save, Folder };
+// The folder of Documents/PreviousTurbo a chooser starts in when nothing is
+// chosen yet: diskImages, roms, or PreviousTurbo itself
+enum class Place { Disks, Roms, Base };
 struct FileFilter {
     const char* name;
     const char* pattern;  // "img;iso" or "*"
@@ -92,9 +99,10 @@ struct FileFilter {
 // Shows the system's file chooser; `done` gets the path (empty if cancelled)
 // from the main loop.
 void choose(Pick kind, const std::string& start, std::vector<FileFilter> filters,
-            std::function<void(const std::string&)> done);
+            std::function<void(const std::string&)> done, Place place = Place::Disks);
 // The same, waiting for the answer.
-std::string choose_now(Pick kind, const std::string& start, std::vector<FileFilter> filters);
+std::string choose_now(Pick kind, const std::string& start, std::vector<FileFilter> filters,
+                       Place place = Place::Disks);
 // Applies answers that arrived (called each frame).
 void deliver_choices();
 

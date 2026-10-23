@@ -31,6 +31,8 @@ const char Memory_fileid[] = "Previous memory.c";
 #include "NextBus.hpp"
 
 #include "newcpu.h"
+#include "cpummu.h"
+#include "jit040.h"
 
 
 /* Set illegal_mem to 1 for debug output: */
@@ -321,7 +323,48 @@ static void mem_rom_bput(uaecptr addr, uae_u32 b)
 }
 
 
+/* PreviousTurbo: where each 64 kB bank of plain RAM (and, for reading,
+ * ROM) is in the host's memory, for the MMU's page cache in Turbo; NULL for
+ * everything else (devices, video memory, memory with write functions) */
+uae_u8 *mem_host_read[65536];
+uae_u8 *mem_host_write[65536];
+
+static uae_u32 mem_ram_bank0_lget(uaecptr addr);
+static uae_u32 mem_ram_bank1_lget(uaecptr addr);
+static uae_u32 mem_ram_bank2_lget(uaecptr addr);
+static uae_u32 mem_ram_bank3_lget(uaecptr addr);
+
+static void memory_set_host_pointers(void)
+{
+	int i;
+
+	for (i = 0; i < 65536; i++) {
+		uaecptr addr = (uaecptr)i << 16;
+		uae_u8 *ram = NULL, *rom = NULL;
+
+		if (bank_lget[i] == mem_ram_bank0_lget)
+			ram = NEXTRam + (addr & next_ram_bank0_mask);
+		else if (bank_lget[i] == mem_ram_bank1_lget)
+			ram = NEXTRam + (addr & next_ram_bank1_mask);
+		else if (bank_lget[i] == mem_ram_bank2_lget)
+			ram = NEXTRam + (addr & next_ram_bank2_mask);
+		else if (bank_lget[i] == mem_ram_bank3_lget)
+			ram = NEXTRam + (addr & next_ram_bank3_mask);
+		else if (bank_lget[i] == mem_rom_lget)
+			rom = NEXTRom + (addr & NEXT_EPROM_MASK);
+		mem_host_read[i] = ram ? ram : rom;
+		mem_host_write[i] = ram;
+	}
+	pt_tlb_flush();
+}
+
 /* **** Main memory **** */
+
+/* PreviousTurbo block cache: a write to a RAM page with code drops the
+ * page's blocks */
+#define JIT040_RAM_WRITTEN(addr) \
+	if (unlikely(jit040_code_ram[(addr) >> 12])) \
+		jit040_invalidate_page((addr) >> 12)
 
 static uae_u32 mem_ram_bank0_lget(uaecptr addr)
 {
@@ -344,18 +387,21 @@ static uae_u32 mem_ram_bank0_bget(uaecptr addr)
 static void mem_ram_bank0_lput(uaecptr addr, uae_u32 l)
 {
 	addr &= next_ram_bank0_mask;
+	JIT040_RAM_WRITTEN(addr);
 	do_put_mem_long(NEXTRam + addr, l);
 }
 
 static void mem_ram_bank0_wput(uaecptr addr, uae_u32 w)
 {
 	addr &= next_ram_bank0_mask;
+	JIT040_RAM_WRITTEN(addr);
 	do_put_mem_word(NEXTRam + addr, w);
 }
 
 static void mem_ram_bank0_bput(uaecptr addr, uae_u32 b)
 {
 	addr &= next_ram_bank0_mask;
+	JIT040_RAM_WRITTEN(addr);
 	NEXTRam[addr] = b;
 }
 
@@ -381,18 +427,21 @@ static uae_u32 mem_ram_bank1_bget(uaecptr addr)
 static void mem_ram_bank1_lput(uaecptr addr, uae_u32 l)
 {
 	addr &= next_ram_bank1_mask;
+	JIT040_RAM_WRITTEN(addr);
 	do_put_mem_long(NEXTRam + addr, l);
 }
 
 static void mem_ram_bank1_wput(uaecptr addr, uae_u32 w)
 {
 	addr &= next_ram_bank1_mask;
+	JIT040_RAM_WRITTEN(addr);
 	do_put_mem_word(NEXTRam + addr, w);
 }
 
 static void mem_ram_bank1_bput(uaecptr addr, uae_u32 b)
 {
 	addr &= next_ram_bank1_mask;
+	JIT040_RAM_WRITTEN(addr);
 	NEXTRam[addr] = b;
 }
 
@@ -418,18 +467,21 @@ static uae_u32 mem_ram_bank2_bget(uaecptr addr)
 static void mem_ram_bank2_lput(uaecptr addr, uae_u32 l)
 {
 	addr &= next_ram_bank2_mask;
+	JIT040_RAM_WRITTEN(addr);
 	do_put_mem_long(NEXTRam + addr, l);
 }
 
 static void mem_ram_bank2_wput(uaecptr addr, uae_u32 w)
 {
 	addr &= next_ram_bank2_mask;
+	JIT040_RAM_WRITTEN(addr);
 	do_put_mem_word(NEXTRam + addr, w);
 }
 
 static void mem_ram_bank2_bput(uaecptr addr, uae_u32 b)
 {
 	addr &= next_ram_bank2_mask;
+	JIT040_RAM_WRITTEN(addr);
 	NEXTRam[addr] = b;
 }
 
@@ -455,18 +507,21 @@ static uae_u32 mem_ram_bank3_bget(uaecptr addr)
 static void mem_ram_bank3_lput(uaecptr addr, uae_u32 l)
 {
 	addr &= next_ram_bank3_mask;
+	JIT040_RAM_WRITTEN(addr);
 	do_put_mem_long(NEXTRam + addr, l);
 }
 
 static void mem_ram_bank3_wput(uaecptr addr, uae_u32 w)
 {
 	addr &= next_ram_bank3_mask;
+	JIT040_RAM_WRITTEN(addr);
 	do_put_mem_word(NEXTRam + addr, w);
 }
 
 static void mem_ram_bank3_bput(uaecptr addr, uae_u32 b)
 {
 	addr &= next_ram_bank3_mask;
+	JIT040_RAM_WRITTEN(addr);
 	NEXTRam[addr] = b;
 }
 
@@ -518,6 +573,10 @@ static void mem_ram_empty_bput(uaecptr addr, uae_u32 b)
 
 /* **** VRAM for monochrome systems **** */
 
+volatile uae_u8 vram_dirty[VRAM_DIRTY_BLOCKS];
+#define VRAM_WRITTEN(addr, size) \
+	(vram_dirty[(addr) >> 9] = 1, vram_dirty[((addr) + (size) - 1) >> 9] = 1)
+
 static uae_u32 mem_video_lget(uaecptr addr)
 {
 	addr &= NEXT_VRAM_MASK;
@@ -540,18 +599,21 @@ static void mem_video_lput(uaecptr addr, uae_u32 l)
 {
 	addr &= NEXT_VRAM_MASK;
 	do_put_mem_long(NEXTVideo + addr, l);
+	VRAM_WRITTEN(addr, 4);
 }
 
 static void mem_video_wput(uaecptr addr, uae_u32 w)
 {
 	addr &= NEXT_VRAM_MASK;
 	do_put_mem_word(NEXTVideo + addr, w);
+	VRAM_WRITTEN(addr, 2);
 }
 
 static void mem_video_bput(uaecptr addr, uae_u32 b)
 {
 	addr &= NEXT_VRAM_MASK;
 	NEXTVideo[addr] = b;
+	VRAM_WRITTEN(addr, 1);
 }
 
 
@@ -763,18 +825,21 @@ static void mem_color_video_lput(uaecptr addr, uae_u32 l)
 {
 	addr &= NEXT_VRAM_COLOR_MASK;
 	do_put_mem_long(NEXTVideo + addr, l);
+	VRAM_WRITTEN(addr, 4);
 }
 
 static void mem_color_video_wput(uaecptr addr, uae_u32 w)
 {
 	addr &= NEXT_VRAM_COLOR_MASK;
 	do_put_mem_word(NEXTVideo + addr, w);
+	VRAM_WRITTEN(addr, 2);
 }
 
 static void mem_color_video_bput(uaecptr addr, uae_u32 b)
 {
 	addr &= NEXT_VRAM_COLOR_MASK;
 	NEXTVideo[addr] = b;
+	VRAM_WRITTEN(addr, 1);
 }
 
 
@@ -1039,6 +1104,9 @@ int memory_init (void)
 	/* Allocate memory */
 	NEXTRam   = malloc_aligned(ram_size);
 	NEXTVideo = malloc_aligned(vram_size);
+	for (i = 0; i < VRAM_DIRTY_BLOCKS; i++) {
+		vram_dirty[i] = 1;  /* new video memory: show all of it */
+	}
 	NEXTIo    = malloc_aligned(NEXT_IO_ALLOC);
 	NEXTRom   = malloc_aligned(NEXT_EPROM_ALLOC);
 	
@@ -1204,6 +1272,9 @@ int memory_init (void)
 	
 	/* Initialise boards on the NextBus */
 	nextbus_init();
+	
+	memory_set_host_pointers();
+	jit040_memory_changed(NEXTRam, ram_size);
 	
 	return 0;
 }

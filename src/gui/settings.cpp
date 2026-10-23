@@ -99,7 +99,7 @@ std::string data_file(const char* name) {
 
 // An editable path with Browse... (and optionally Default) buttons.
 void path_field(const char* id, char* path, Pick kind, const std::vector<FileFilter>& filters,
-                const char* default_path = nullptr, float right = 0) {
+                const char* default_path = nullptr, float right = 0, Place place = Place::Disks) {
     ImGui::PushID(id);
     std::string text = path;
     const float buttons = S(default_path ? 150 : 80) + right;
@@ -109,7 +109,7 @@ void path_field(const char* id, char* path, Pick kind, const std::vector<FileFil
     if (ImGui::Button("Browse...")) {
         choose(kind, path, filters, [path](const std::string& chosen) {
             if (!chosen.empty()) copy(path, chosen);
-        });
+        }, place);
     }
     if (default_path) {
         ImGui::SameLine();
@@ -219,6 +219,18 @@ void tab_machine() {
         ImGui::Checkbox("Variable", &sys.bRealtime);
         ImGui::SetItemTooltip("Runs the CPU as fast as the host can, with the guest's clocks following real time");
     }
+
+    label("Speed");
+    ImGui::Checkbox("Turbo", &sys.bFullSpeed);
+    ImGui::SetItemTooltip("As fast as the host can go: no speed limit and fast disks, with the machine's\n"
+                          "clocks kept to real time (the host sleeps while it is idle). Also in the status bar.");
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!sys.bFullSpeed);
+    ImGui::Checkbox("JIT", &sys.bJIT);
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("With Turbo, the 68040's code is compiled for this computer's processor,\n"
+                          "which is much faster again. Off: Turbo runs the 68040 interpreter.");
 
     label("Memory size");
     {
@@ -389,13 +401,13 @@ void tab_rom() {
     CNF_ROM& r = ConfigureParams.Rom;
     const std::string d030 = data_file("Rev_1.0_v41"), d040 = data_file("Rev_2.5_v66"), dturbo = data_file("Rev_3.3_v74");
     ImGui::TextUnformatted("ROM for 68030 based systems:");
-    path_field("rom030", r.szRom030FileName, Pick::Open, kRomFilters, d030.c_str());
+    path_field("rom030", r.szRom030FileName, Pick::Open, kRomFilters, d030.c_str(), 0, Place::Roms);
     ImGui::Spacing();
     ImGui::TextUnformatted("ROM for 68040 based systems:");
-    path_field("rom040", r.szRom040FileName, Pick::Open, kRomFilters, d040.c_str());
+    path_field("rom040", r.szRom040FileName, Pick::Open, kRomFilters, d040.c_str(), 0, Place::Roms);
     ImGui::Spacing();
     ImGui::TextUnformatted("ROM for 68040 Turbo systems:");
-    path_field("romturbo", r.szRomTurboFileName, Pick::Open, kRomFilters, dturbo.c_str());
+    path_field("romturbo", r.szRomTurboFileName, Pick::Open, kRomFilters, dturbo.c_str(), 0, Place::Roms);
     ImGui::Spacing();
     note("A reset is needed after changing these options.");
 }
@@ -463,7 +475,7 @@ void tab_display() {
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted("ROM");
             ImGui::SameLine();
-            path_field("ndrom", board.szRomFileName, Pick::Open, kRomFilters);
+            path_field("ndrom", board.szRomFileName, Pick::Open, kRomFilters, nullptr, 0, Place::Roms);
             ImGui::Unindent(S(24));
         }
         ImGui::PopID();
@@ -909,7 +921,7 @@ void tab_network() {
                 EN_NFS& s = ConfigureParams.Ethernet.nfs[i];
                 copy(s.szPathName, chosen);
                 if (i > 0 && !s.szHostName[0]) std::snprintf(s.szHostName, sizeof s.szHostName, "nfs%d", i);
-            });
+            }, Place::Base);
         }
         if (i > 0) {
             ImGui::SameLine();
@@ -944,7 +956,7 @@ void tab_printer() {
         if (ImGui::RadioButton(kPapers[i].label, p.nPaperSize == kPapers[i].size)) p.nPaperSize = kPapers[i].size;
     }
     ImGui::TextUnformatted("Directory to save printer output:");
-    path_field("printdir", p.szPrintToFileName, Pick::Folder, {});
+    path_field("printdir", p.szPrintToFileName, Pick::Folder, {}, nullptr, 0, Place::Base);
 }
 
 void tab_sound() {
@@ -1083,10 +1095,8 @@ void tab_mouse() {
     ImGui::SetCursorPosX(S(170));
     ImGui::Checkbox("Use raw mouse movement data if available", &m.bUseRawMotion);
     ImGui::Separator();
-    ImGui::Checkbox("Enable auto-locking (click the screen to lock the mouse, Ctrl-click to release it)",
-                    &m.bEnableAutoGrab);
+    ImGui::Checkbox("Enable auto-locking (click the screen to lock the mouse)", &m.bEnableAutoGrab);
     ImGui::Checkbox("Map Ctrl-click to right-click", &m.bEnableMacClick);
-    ImGui::SetItemTooltip("Turns auto-locking off (it uses Ctrl-click)");
     ImGui::Checkbox("Map scroll wheel to arrow keys", &m.bEnableMapToKey);
     ImGui::Separator();
     label("Tablet");
@@ -1124,14 +1134,14 @@ void tab_mouse() {
 // --- The window ------------------------------------------------------------------------
 
 void load_config() {
-    const std::string path = choose_now(Pick::Open, sConfigFileName, kConfigFilters);
+    const std::string path = choose_now(Pick::Open, sConfigFileName, kConfigFilters, Place::Base);
     if (path.empty()) return;
     copy(sConfigFileName, path);
     Configuration_Load(nullptr);
 }
 
 void save_config() {
-    const std::string path = choose_now(Pick::Save, sConfigFileName, kConfigFilters);
+    const std::string path = choose_now(Pick::Save, sConfigFileName, kConfigFilters, Place::Base);
     if (path.empty()) return;
     copy(sConfigFileName, path);
     Configuration_Save();
@@ -1259,7 +1269,7 @@ std::vector<MenuEntry> media_menu() {
 }
 
 void open_settings_file() {
-    const std::string path = choose_now(Pick::Open, sConfigFileName, kConfigFilters);
+    const std::string path = choose_now(Pick::Open, sConfigFileName, kConfigFilters, Place::Base);
     if (path.empty()) return;
     const bool was_active = Main_PauseEmulation(true);
     CNF_PARAMS current = ConfigureParams;

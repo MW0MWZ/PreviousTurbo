@@ -35,6 +35,7 @@
 #include "memory.h"
 #include "newcpu.h"
 #include "cpummu.h"
+#include "jit040.h"
 #include "debug.h"
 #include "log.h"
 
@@ -133,8 +134,19 @@ void mmu_make_transparent_region(uaecptr baseaddr, uae_u32 size, int datamode)
 #endif
 }
 
+struct pt_tlb_entry pt_tlb[3][PT_TLB_SIZE];
+bool pt_tlb_on;
+bool pt_tlb_direct;
+
+void pt_tlb_flush(void)
+{
+	memset(pt_tlb, 0, sizeof(pt_tlb));
+	jit040_stop = 1;  /* the code may be mapped differently */
+}
+
 void mmu_tt_modified (void)
 {
+	pt_tlb_flush();
 	mmu_ttr_enabled_ins = ((regs.itt0 | regs.itt1) & MMU_TTR_BIT_ENABLED) != 0;
 	mmu_ttr_enabled_data = ((regs.dtt0 | regs.dtt1) & MMU_TTR_BIT_ENABLED) != 0;
 	mmu_ttr_enabled = mmu_ttr_enabled_ins || mmu_ttr_enabled_data;
@@ -1506,6 +1518,7 @@ void REGPARAM2 mmu_flush_atc(uaecptr addr, bool super, bool global)
 	}	
 	flush_shortcut_cache(addr, super);
 	mmu_flush_cache();
+	pt_tlb_flush();
 }
 
 void REGPARAM2 mmu_flush_atc_all(bool global)
@@ -1523,6 +1536,7 @@ void REGPARAM2 mmu_flush_atc_all(bool global)
 	}
 	flush_shortcut_cache(0xffffffff, 0);
 	mmu_flush_cache();
+	pt_tlb_flush();
 }
 
 void REGPARAM2 mmu_set_funcs(void)
@@ -1538,6 +1552,8 @@ void REGPARAM2 mmu_set_funcs(void)
 	x_phys_put_byte = phys_put_byte;
 	x_phys_put_word = phys_put_word;
 	x_phys_put_long = phys_put_long;
+	pt_tlb_direct = !(currprefs.cpu_memory_cycle_exact || currprefs.cpu_compatible);
+	pt_tlb_flush();
 	if (currprefs.cpu_memory_cycle_exact || currprefs.cpu_compatible) {
 		x_phys_get_iword = get_word_icache040;
 		x_phys_get_ilong = get_long_icache040;
@@ -1567,6 +1583,7 @@ void REGPARAM2 mmu_reset(void)
 
 uae_u16 REGPARAM2 mmu_set_tc(uae_u16 tc)
 {
+	pt_tlb_flush();
 	if (currprefs.mmu_ec) {
 		tc &= ~(0x8000 | 0x4000);
 		// at least 68EC040 always returns zero when TC is read.

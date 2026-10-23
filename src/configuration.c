@@ -339,6 +339,8 @@ static const struct Config_Tag configs_System[] =
 	{ "n_FPUType", Int_Tag, &ConfigureParams.System.n_FPUType },
 	{ "bCompatibleFPU", Bool_Tag, &ConfigureParams.System.bCompatibleFPU },
 	{ "bMMU", Bool_Tag, &ConfigureParams.System.bMMU },
+	{ "bFullSpeed", Bool_Tag, &ConfigureParams.System.bFullSpeed },
+	{ "bJIT", Bool_Tag, &ConfigureParams.System.bJIT },
 	{ NULL , Error_Tag, NULL }
 };
 
@@ -540,6 +542,8 @@ void Configuration_SetDefault(void)
 	ConfigureParams.System.nCpuFreq = 25;
 	ConfigureParams.System.bCompatibleCpu = false;
 	ConfigureParams.System.bRealtime = false;
+	ConfigureParams.System.bFullSpeed = false;
+	ConfigureParams.System.bJIT = true;
 	ConfigureParams.System.nDSPType = DSP_TYPE_EMU;
 	ConfigureParams.System.bDSPMemoryExpansion = false;
 	ConfigureParams.System.n_FPUType = FPU_68882;
@@ -788,9 +792,6 @@ void Configuration_Apply(bool bReset)
 	int i;
 
 	/* Mouse settings */
-	if (ConfigureParams.Mouse.bEnableMacClick) {
-		ConfigureParams.Mouse.bEnableAutoGrab = false;
-	}
 	Configuration_CheckFloatMinMax(&ConfigureParams.Mouse.fLinScale, MOUSE_LIN_MIN, MOUSE_LIN_MAX);
 	Configuration_CheckFloatMinMax(&ConfigureParams.Mouse.fExpScale, MOUSE_EXP_MIN, MOUSE_EXP_MAX);
 
@@ -1024,6 +1025,13 @@ void Configuration_Load(const char *psFileName)
 	Configuration_LoadSection(psFileName, configs_Keyboard, "[Keyboard]");
 	Configuration_LoadSection(psFileName, configs_ShortCutWithMod, "[ShortcutsWithModifiers]");
 	Configuration_LoadSection(psFileName, configs_ShortCutWithoutMod, "[ShortcutsWithoutModifiers]");
+	/* Ctrl+Alt+G releases the mouse, as in SiliconGhost; settings that still
+	 * have the old pair (M for the mouse, G for screenshots) are swapped */
+	if (ConfigureParams.Shortcut.withModifier[SHORTCUT_MOUSEGRAB] == 'm' &&
+	    ConfigureParams.Shortcut.withModifier[SHORTCUT_SCREENSHOT] == 'g') {
+		ConfigureParams.Shortcut.withModifier[SHORTCUT_MOUSEGRAB] = 'g';
+		ConfigureParams.Shortcut.withModifier[SHORTCUT_SCREENSHOT] = 'm';
+	}
 	Configuration_LoadSection(psFileName, configs_Mouse, "[Mouse]");
 	Configuration_LoadSection(psFileName, configs_Tablet, "[Tablet]");
 	Configuration_LoadSection(psFileName, configs_Sound, "[Sound]");

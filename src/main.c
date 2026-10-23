@@ -245,6 +245,7 @@ void Main_EventHandler(void) {
 #endif
 
 	Timing_Sync();
+	M68000_CheckSpeed();
 
 	CycInt_AddTimeEvent((1000*1000)/200, 0, EVENT_MAIN_EVENT); /* Poll events at 200 Hz */
 }

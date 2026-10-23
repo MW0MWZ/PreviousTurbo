@@ -384,6 +384,7 @@ extern void safe_interrupt_set(int, int, bool);
 #define SPCFLAG_CHECK		0x008000
 #define SPCFLAG_MMURESTART	0x010000
 #define SPCFLAG_CALLBACK	0x020000
+#define SPCFLAG_JIT040		0x040000 /* PreviousTurbo: block cache on or off */
 
 #ifdef WINUAE_FOR_HATARI
 // Hatari's specific flags
@@ -906,6 +907,7 @@ extern const struct cputbl op_smalltbl_41[];
 extern const struct cputbl op_smalltbl_51[];
 extern const struct cputbl op_smalltbl_25[]; // CE
 extern const struct cputbl op_smalltbl_31[]; // MMU
+extern const struct cputbl op_smalltbl_36[]; // MMU, block cache
 /* 68030 */
 extern const struct cputbl op_smalltbl_2[];
 extern const struct cputbl op_smalltbl_42[];

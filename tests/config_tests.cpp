@@ -77,7 +77,8 @@ TEST(config_save_load_round_trip) {
 
 TEST(config_in_documents_folder) {
     // Settings in Documents/PreviousTurbo/settings.cfg, disk images in its
-    // diskImages folder, made when the program starts
+    // diskImages folder and ROMs in its roms folder, made when the program
+    // starts
     CHECK(Paths_GetUserData() != nullptr);
     CHECK(Paths_GetDiskImagesDir() != nullptr);
     if (!Paths_GetUserData() || !Paths_GetDiskImagesDir()) return;
@@ -87,7 +88,42 @@ TEST(config_in_documents_folder) {
     CHECK(std::filesystem::is_directory(data));
     CHECK(std::filesystem::path(Paths_GetDiskImagesDir()) == data / "diskImages");
     CHECK(std::filesystem::is_directory(Paths_GetDiskImagesDir()));
+    CHECK(Paths_GetRomsDir() != nullptr);
+    if (Paths_GetRomsDir()) {
+        CHECK(std::filesystem::path(Paths_GetRomsDir()) == data / "roms");
+        CHECK(std::filesystem::is_directory(Paths_GetRomsDir()));
+    }
 
     Configuration_SetDefault();
     CHECK(std::filesystem::path(sConfigFileName) == data / "settings.cfg");
+}
+
+TEST(config_mouse_release_key) {
+    // Ctrl+Alt+G releases the mouse; settings saved with the old keys
+    // (M for the mouse, G for screenshots) are given the new ones
+    const auto path = std::filesystem::temp_directory_path() / "pt_tests_keys.cfg";
+
+    Configuration_SetDefault();
+    CHECK_EQ(ConfigureParams.Shortcut.withModifier[SHORTCUT_MOUSEGRAB], 'g');
+    CHECK_EQ(ConfigureParams.Shortcut.withModifier[SHORTCUT_SCREENSHOT], 'm');
+
+    ConfigureParams.Shortcut.withModifier[SHORTCUT_MOUSEGRAB] = 'm';
+    ConfigureParams.Shortcut.withModifier[SHORTCUT_SCREENSHOT] = 'g';
+    save_to(path);
+    Configuration_SetDefault();
+    Configuration_Load(path.string().c_str());
+    CHECK_EQ(ConfigureParams.Shortcut.withModifier[SHORTCUT_MOUSEGRAB], 'g');
+    CHECK_EQ(ConfigureParams.Shortcut.withModifier[SHORTCUT_SCREENSHOT], 'm');
+
+    // keys chosen by the user stay as they are
+    ConfigureParams.Shortcut.withModifier[SHORTCUT_MOUSEGRAB] = 'l';
+    ConfigureParams.Shortcut.withModifier[SHORTCUT_SCREENSHOT] = 'g';
+    save_to(path);
+    Configuration_SetDefault();
+    Configuration_Load(path.string().c_str());
+    CHECK_EQ(ConfigureParams.Shortcut.withModifier[SHORTCUT_MOUSEGRAB], 'l');
+    CHECK_EQ(ConfigureParams.Shortcut.withModifier[SHORTCUT_SCREENSHOT], 'g');
+
+    std::filesystem::remove(path);
+    Configuration_SetDefault();
 }

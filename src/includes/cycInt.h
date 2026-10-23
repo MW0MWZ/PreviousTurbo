@@ -51,6 +51,8 @@ extern void CycInt_AddCycleTimeEvent(uint64_t CycleTime, uint64_t FastTime, even
 extern void CycInt_UpdateCycleTimeEvent(uint64_t CycleTime, uint64_t FastTime, event_id i);
 extern void CycInt_RemovePendingEvent(event_id i);
 extern bool CycInt_EventPending(event_id i);
+extern void CycInt_IdleSkip(void);
+extern uint64_t CycInt_IdleCycles;
 
 #ifdef __cplusplus
 }

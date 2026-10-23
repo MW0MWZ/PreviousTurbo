@@ -33,6 +33,7 @@
 #include "disasm.h"
 #include "cpummu.h"
 #include "cpummu030.h"
+#include "jit040.h"
 #include "cputbl.h"
 #include "cpu_prefetch.h"
 #include "debugmem.h"
@@ -44,6 +45,8 @@
 #include "m68000.h"
 #include "reset.h"
 #include "cycInt.h"
+#include "host.h"
+#include "timing.h"
 #include "dsp.h"
 #include "dimension.hpp"
 #include "sysReg.h"
@@ -2123,6 +2126,11 @@ static void build_cpufunctbl (void)
 
 	}
 
+#ifdef CPUEMU_36
+	if (tbl == op_smalltbl_31)
+		jit040_build_functbl(op_smalltbl_31, op_smalltbl_36);
+#endif
+
 	need_opcode_swap = 0;
 #ifdef HAVE_GET_WORD_UNSWAPPED
 	if (jit) {
@@ -3805,6 +3813,11 @@ kludge_me_do:
 static void ExceptionX (int nr, uaecptr address, uaecptr oldpc)
 {
 	uaecptr pc = m68k_getpc();
+#ifdef CPUEMU_36
+	/* the block cache's self-test compares instructions up to here */
+	if (unlikely(jit040_selftesting))
+		THROW(nr);
+#endif
 	regs.exception = nr;
 	regs.loop_mode = 0;
 
@@ -5138,6 +5151,7 @@ static void debug_cpu_stop(void)
 static inline void run_other_MPUs(void)
 {
 	static int ndCycles = 0;
+	static bool stopped_before;
 
 	ndCycles += cpu_cycles;
 	// bundle some 68k cycles for MPUs
@@ -5151,6 +5165,33 @@ static inline void run_other_MPUs(void)
 	}
 
 	M68000_AddCycles(cpu_cycles);
+	/* for the speed shown: cycles run, and host time spent stopped (less
+	 * the time waited for real time meanwhile, counted already) */
+	if (regs.stopped) {
+		static uint64_t stop_start, waited_start;
+		uint64_t now = host_get_counter();
+		if (!stopped_before) {
+			stop_start = now;
+			waited_start = Timing_WaitedUs;
+		} else {
+			/* up to now, as the time after the last check may be running */
+			double us = (double)(now - stop_start) * 1e6 / host_get_counter_frequency();
+			us -= (double)(Timing_WaitedUs - waited_start);
+			if (us > 0)
+				M68000_StoppedUs += (uint64_t)us;
+			stop_start = now;
+			waited_start = Timing_WaitedUs;
+		}
+	} else {
+		M68000_CyclesRun += cpu_cycles;
+	}
+	stopped_before = regs.stopped;
+#if ENABLE_DSP_EMU
+	if (regs.stopped && ConfigureParams.System.bFullSpeed && !dsp_core.running)
+#else
+	if (regs.stopped && ConfigureParams.System.bFullSpeed)
+#endif
+		CycInt_IdleSkip();
 }
 
 static int do_specialties (int cycles)
@@ -6386,12 +6427,117 @@ static void m68k_run_mmu060 (void)
 
 #endif
 
+#ifdef CPUEMU_36
+
+/* PreviousTurbo: 68040 MMU with the block cache (jit040.c), in Turbo.
+ * Each instruction is run as by m68k_run_mmu040 below, with the same
+ * handling of faults and restarts; what differs is that the instructions of
+ * a block are not fetched and decoded again, and that the cycles of a block
+ * are given to the rest of the machine at its end.
+ * Returns 0 when Turbo is switched off, 1 to halt, -1 to leave m68k_run. */
+struct flag_struct jit040_f;
+static int jit040_cycles;
+
+static int m68k_run_jit040 (void)
+{
+	volatile int halt = 0;
+
+	TRY (prb) {
+		for (;;) {
+			uaecptr pc = m68k_getpci ();
+			struct jit040_block *b = jit040_recording ? NULL : jit040_find (pc);
+
+			if (b && b->code && !(regs.t0 | regs.t1) && !(regs.spcflags & SPCFLAG_DEBUGGER)) {
+				/* native code (jit040_native.c), not while tracing or
+				 * debugging, which look at every instruction */
+				jit040_hdelta = b->hdelta;
+				jit040_stop = 0;
+				jit040_cycles += b->code ();
+				if (jit040_link_site)
+					jit040_link (b);
+			} else if (b) {
+				struct jit040_ins *in = b->ins;
+				int i = 0;
+
+				jit040_hdelta = b->hdelta;
+				jit040_stop = 0;
+				for (;;) {
+					jit040_f.cznv = regflags.cznv;
+					jit040_f.x = regflags.x;
+					mmu_restart = true;
+					regs.instruction_pc = pc;
+					mmu_opcode = regs.opcode = in->opcode;
+					jit040_cycles += in->fn (in->opcode);
+					if (++i == b->n || regs.spcflags || jit040_stop)
+						break;
+					pc += in->len;
+					in++;
+					if (m68k_getpci () != pc || regs.s != b->s)
+						break;
+				}
+				if (!b->code && ++b->runs == JIT040_HOT)
+					jit040_compile (b);
+			} else {
+				if (!jit040_recording)
+					jit040_record_start (pc);
+				jit040_f.cznv = regflags.cznv;
+				jit040_f.x = regflags.x;
+				mmu_restart = true;
+				regs.instruction_pc = pc;
+				mmu_opcode = -1;
+				mmu_opcode = regs.opcode = x_prefetch (0);
+				cpu_cycles = (*cpufunctbl[regs.opcode])(regs.opcode);
+				jit040_cycles += cpu_cycles;
+				if (jit040_recording)
+					jit040_record_step (pc, regs.opcode, cpu_cycles);
+			}
+
+			cpu_cycles = jit040_cycles;
+			jit040_cycles = 0;
+			do_cycles (cpu_cycles);
+			run_other_MPUs ();
+
+			if (regs.spcflags) {
+				jit040_record_end ();
+				if (regs.spcflags & SPCFLAG_JIT040) {
+					unset_special (SPCFLAG_JIT040);
+					if (!jit040_active)
+						break;
+				}
+				if (do_specialties (cpu_cycles)) {
+					STOPTRY;
+					return -1;
+				}
+			}
+		}
+	} CATCH (prb) {
+		jit040_record_end ();
+		if (mmu_restart) {
+			/* restore state if instruction restart */
+			regflags.cznv = jit040_f.cznv;
+			regflags.x = jit040_f.x;
+			m68k_setpci (regs.instruction_pc);
+		}
+		cpu_restore_fixup();
+		TRY (prb2) {
+			Exception (prb);
+		} CATCH (prb2) {
+			halt = 1;
+		} ENDTRY
+	} ENDTRY
+	return halt;
+}
+
+#endif
+
 #ifdef CPUEMU_31
 
 /* Aranym MMU 68040  */
 static void m68k_run_mmu040 (void)
 {
-	struct flag_struct f;
+	/* static: it is written after setjmp and read after longjmp (a fault),
+	 * which a local in a register would not survive */
+	static struct flag_struct f;
 	int halt = 0;
 
 	check_halt();
@@ -6401,6 +6547,16 @@ static void m68k_run_mmu040 (void)
 
 	while (!halt) {
 		check_debugger();
+#ifdef CPUEMU_36
+		if (jit040_active) {
+			/* Turbo: the block cache, until Turbo is switched off */
+			int r = m68k_run_jit040();
+			if (r < 0)
+				return;
+			halt = r;
+			continue;
+		}
+#endif
 		TRY (prb) {
 			for (;;) {
 				f.cznv = regflags.cznv;
@@ -6420,6 +6576,13 @@ static void m68k_run_mmu040 (void)
 #endif
 
 				if (regs.spcflags) {
+#ifdef CPUEMU_36
+					if (regs.spcflags & SPCFLAG_JIT040) {
+						unset_special(SPCFLAG_JIT040);
+						if (jit040_active)
+							break;
+					}
+#endif
 					if (do_specialties(cpu_cycles)) {
 						STOPTRY;
 						return;
@@ -6452,7 +6615,9 @@ static void m68k_run_mmu040 (void)
 // Previous MMU 68030
 static void m68k_run_mmu030 (void)
 {
-	struct flag_struct f;
+	/* static: it is written after setjmp and read after longjmp (a fault),
+	 * which a local in a register would not survive */
+	static struct flag_struct f;
 	int halt = 0;
 
 #ifdef WINUAE_FOR_HATARI

@@ -93,6 +93,9 @@ extern void M68000_Stop(void);
 extern void M68000_Start(void);
 extern void M68000_CheckInterrupt(void);
 extern void M68000_CheckCpuSettings(void);
+extern void M68000_CheckSpeed(void);
+extern volatile uint64_t M68000_CyclesRun;   /* cycles run, not counting STOP */
+extern volatile uint64_t M68000_StoppedUs;   /* host time spent in STOP, not waiting */
 extern void M68000_BusError (uint32_t addr, int ReadWrite, int Size, int AccessType, uae_u32 val);
 
 extern uint32_t M68000_ReadLong(uint32_t addr);

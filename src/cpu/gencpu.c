@@ -58,6 +58,7 @@ static int using_waitstates;
 static int using_simple_cycles;
 static int using_debugmem;
 static int using_noflags;
+static int using_jit_fetch; // PreviousTurbo: 68040 MMU, code read from the host
 static int using_test;
 static int using_nocycles;
 static int using_get_word_unswapped;
@@ -5385,6 +5386,23 @@ static void resetvars (void)
 		dstwlrmw = "put_lrmw_word_mmu040";
 		dstllrmw = "put_lrmw_long_mmu040";
 		getpc = "m68k_getpci()";
+		if (using_jit_fetch) {
+			// PreviousTurbo: instruction words from the host's copy of the
+			// code page, data through the page cache first
+			prefetch_long = "get_ilong_jit";
+			prefetch_word = "get_iword_jit";
+			nextw = "next_iword_jit";
+			nextl = "next_ilong_jit";
+			srcli = "get_ilong_jit";
+			srcwi = "get_iword_jit";
+			srcbi = "get_ibyte_jit";
+			srcl = "get_long_jit";
+			dstl = "put_long_jit";
+			srcw = "get_word_jit";
+			dstw = "put_word_jit";
+			srcb = "get_byte_jit";
+			dstb = "put_byte_jit";
+		}
 	} else if (using_mmu) {
 		// 68060 MMU
 		disp020 = "x_get_disp_ea_020";
@@ -9675,7 +9693,7 @@ static void generate_includes (FILE *f, int id)
 	fprintf(f, "#include \"cpu_prefetch.h\"\n");
 	fprintf(f, "#include \"cputbl.h\"\n");
 	fprintf(f, "#include \"debugmem.h\"\n");
-	if (id == 31 || id == 33)
+	if (id == 31 || id == 33 || id == 36)
 		fprintf(f, "#include \"cpummu.h\"\n");
 	else if (id == 32 || id == 34 || id == 35)
 		fprintf(f, "#include \"cpummu030.h\"\n");
@@ -10226,7 +10244,7 @@ static void generate_cpu (int id, int mode)
 	if (id == 0 || id == 11 || id == 13 ||
 		id == 20 || id == 21 || id == 22 || id == 23 || id == 24 ||
 		id == 31 || id == 32 || id == 33 || id == 34 || id == 35 ||
-		id == 40 || id == 50) {
+		id == 36 || id == 40 || id == 50) {
 		if (generate_stbl)
 			fprintf(stblfile, "#ifdef CPUEMU_%d%s\n", postfix, extraup);
 		postfix2 = postfix;
@@ -10254,6 +10272,7 @@ static void generate_cpu (int id, int mode)
 	need_exception_oldpc = 0;
 	using_get_word_unswapped = 0;
 	using_noflags = 0;
+	using_jit_fetch = 0;
 
 	if (id == 11 || id == 12) { // 11 = 68010 prefetch, 12 = 68000 prefetch
 		cpu_level = id == 11 ? 1 : 0;
@@ -10317,8 +10336,9 @@ static void generate_cpu (int id, int mode)
 			for (rp = 0; rp < nr_cpuop_funcs; rp++)
 				opcode_next_clev[rp] = cpu_level;
 		}
-	} else if (id == 31) { // 31 = 68040 MMU
+	} else if (id == 31 || id == 36) { // 31 = 68040 MMU, 36 = the same for the block cache
 		mmu_postfix = "040";
+		using_jit_fetch = id == 36;
 		cpu_level = 4;
 		using_mmu = 68040;
 		read_counts();
@@ -10458,7 +10478,7 @@ int main(int argc, char *argv[])
 	generate_includes(stblfile, 0);
 
 	for (int i = 0; i <= 55; i++) {
-		if (i!=31 && i!=32) // Previous
+		if (i!=31 && i!=32 && i!=36) // Previous, PreviousTurbo
 			continue;
 		using_nocycles = 1; // Previous
 		generate_stbl = 1;

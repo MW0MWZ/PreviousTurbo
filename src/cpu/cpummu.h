@@ -267,8 +267,98 @@ extern int mmu_data_read_hit, mmu_data_read_miss;
 extern int mmu_data_write_hit, mmu_data_write_miss;
 #endif
 
+
+/* PreviousTurbo: in Turbo, a page cache in front of the transparent
+ * translation check and the ATC. An entry is made only after an access
+ * went the full way without a fault, so used and modified bits, write
+ * protection and faults behave as before; it is emptied with the ATC and
+ * whenever the MMU registers change. */
+#define PT_TLB_SIZE 1024
+#define PT_TLB_INS   0
+#define PT_TLB_READ  1
+#define PT_TLB_WRITE 2
+struct pt_tlb_entry {
+	uae_u32 tag;
+	uae_u32 phys;
+	uae_u8 *host;   /* the page in the host's memory, if plain RAM/ROM */
+	uae_u8 cache;
+	uae_u32 jit_tag;     /* for the native code: the tag if host is set, else 0 */
+	uintptr_t jit_host;  /* and host less the page's virtual address */
+};
+extern struct pt_tlb_entry pt_tlb[3][PT_TLB_SIZE];
+extern bool pt_tlb_on;
+extern bool pt_tlb_direct;  /* no cache or cycle-exact emulation in between */
+extern uae_u8 *mem_host_read[65536];
+extern uae_u8 *mem_host_write[65536];
+extern void pt_tlb_flush(void);
+#define PT_TLB_TAG(addr) (((addr) & 0xfffff000) | (regs.s ? 3 : 2))
+#define PT_TLB_SLOT(type, addr) (&pt_tlb[type][((addr) >> 12) & (PT_TLB_SIZE - 1)])
+
+#define PT_TLB_LOOKUP(type, getter, hostget) \
+	struct pt_tlb_entry *pte = NULL; \
+	uae_u32 ptag = 0; \
+	if (pt_tlb_on && (type) >= 0) { \
+		pte = PT_TLB_SLOT(type, addr); \
+		ptag = PT_TLB_TAG(addr); \
+		if (pte->tag == ptag) { \
+			mmu_cache_state = pte->cache; \
+			if (pte->host) \
+				return hostget(pte->host + (addr & 0xfff)); \
+			return getter(pte->phys | (addr & 0xfff)); \
+		} \
+	}
+#define PT_TLB_STORE_LOOKUP(type, putter, hostput) \
+	struct pt_tlb_entry *pte = NULL; \
+	uae_u32 ptag = 0; \
+	if (pt_tlb_on && (type) >= 0) { \
+		pte = PT_TLB_SLOT(type, addr); \
+		ptag = PT_TLB_TAG(addr); \
+		if (pte->tag == ptag) { \
+			mmu_cache_state = pte->cache; \
+			if (pte->host) \
+				hostput(pte->host + (addr & 0xfff), val); \
+			else \
+				putter(pte->phys | (addr & 0xfff), val); \
+			return; \
+		} \
+	}
+#define PT_HOST_GET_BYTE(p) (*(p))
+#define PT_HOST_PUT_BYTE(p, v) (*(p) = (uae_u8)(v))
+#define PT_TLB_FILL(table) \
+	if (pte) { \
+		uae_u8 *bank = pt_tlb_direct ? table[addr >> 16] : NULL; \
+		pte->tag = ptag; \
+		pte->phys = addr & 0xfffff000; \
+		pte->host = bank ? bank + (addr & 0xf000) : NULL; \
+		pte->cache = mmu_cache_state; \
+		PT_TLB_JIT(pte); \
+	}
+#define PT_TLB_FILL_WRITE() \
+	PT_TLB_FILL(mem_host_write) \
+	if (pte && pte->host && jit040_is_code(pte->host)) { \
+		pte->host = NULL; \
+		pte->jit_tag = 0; \
+	}
+/* jit_tag and jit_host from tag and host */
+#define PT_TLB_JIT(pte) \
+	(pte)->jit_tag = (pte)->host ? (pte)->tag : 0; \
+	(pte)->jit_host = (uintptr_t)(pte)->host - ((pte)->tag & 0xfffff000)
+
+/* PreviousTurbo block cache (jit040.c): RAM pages that hold code blocks.
+ * Writes to them go the full way, past the RAM bank functions, which drop
+ * the blocks. */
+extern uae_u8 *jit040_ram_base;
+extern uae_u32 jit040_ram_size;
+extern uae_u8 jit040_code_ram[];
+static ALWAYS_INLINE int jit040_is_code(const uae_u8 *host)
+{
+	uintptr_t off = (uintptr_t)(host - jit040_ram_base);
+	return off < jit040_ram_size && jit040_code_ram[off >> 12];
+}
+
 static ALWAYS_INLINE uae_u32 mmu_get_ilong(uaecptr addr, int size)
 {
+	PT_TLB_LOOKUP(PT_TLB_INS, x_phys_get_ilong, do_get_mem_long)
 	mmu_cache_state = cache_default_ins;
 	if ((!mmu_ttr_enabled_ins || mmu_match_ttr_ins(addr,regs.s!=0) == TTR_NO_MATCH) && regs.mmu_enabled) {
 #if MMU_IPAGECACHE
@@ -288,11 +378,13 @@ static ALWAYS_INLINE uae_u32 mmu_get_ilong(uaecptr addr, int size)
 		}
 #endif
 	}
+	PT_TLB_FILL(mem_host_read)
 	return x_phys_get_ilong(addr);
 }
 
 static ALWAYS_INLINE uae_u16 mmu_get_iword(uaecptr addr, int size)
 {
+	PT_TLB_LOOKUP(PT_TLB_INS, x_phys_get_iword, do_get_mem_word)
 	mmu_cache_state = cache_default_ins;
 	if ((!mmu_ttr_enabled_ins || mmu_match_ttr_ins(addr,regs.s!=0) == TTR_NO_MATCH) && regs.mmu_enabled) {
 #if MMU_IPAGECACHE
@@ -312,12 +404,14 @@ static ALWAYS_INLINE uae_u16 mmu_get_iword(uaecptr addr, int size)
 		}
 #endif
 	}
+	PT_TLB_FILL(mem_host_read)
 	return x_phys_get_iword(addr);
 }
 
 
 static ALWAYS_INLINE uae_u32 mmu_get_long(uaecptr addr, bool data, int size)
 {
+	PT_TLB_LOOKUP((data ? PT_TLB_READ : PT_TLB_INS), x_phys_get_long, do_get_mem_long)
 	mmu_cache_state = cache_default_data;
 	if ((!mmu_ttr_enabled || mmu_match_ttr(addr,regs.s!=0,data) == TTR_NO_MATCH) && regs.mmu_enabled) {
 #if MMU_DPAGECACHE
@@ -339,11 +433,13 @@ static ALWAYS_INLINE uae_u32 mmu_get_long(uaecptr addr, bool data, int size)
 		}
 #endif
 	}
+	PT_TLB_FILL(mem_host_read)
 	return x_phys_get_long(addr);
 }
 
 static ALWAYS_INLINE uae_u16 mmu_get_word(uaecptr addr, bool data, int size)
 {
+	PT_TLB_LOOKUP((data ? PT_TLB_READ : PT_TLB_INS), x_phys_get_word, do_get_mem_word)
 	mmu_cache_state = cache_default_data;
 	if ((!mmu_ttr_enabled || mmu_match_ttr(addr,regs.s!=0,data) == TTR_NO_MATCH) && regs.mmu_enabled) {
 #if MMU_DPAGECACHE
@@ -365,11 +461,13 @@ static ALWAYS_INLINE uae_u16 mmu_get_word(uaecptr addr, bool data, int size)
 		}
 #endif
 	}
+	PT_TLB_FILL(mem_host_read)
 	return x_phys_get_word(addr);
 }
 
 static ALWAYS_INLINE uae_u8 mmu_get_byte(uaecptr addr, bool data, int size)
 {
+	PT_TLB_LOOKUP((data ? PT_TLB_READ : PT_TLB_INS), x_phys_get_byte, PT_HOST_GET_BYTE)
 	mmu_cache_state = cache_default_data;
 	if ((!mmu_ttr_enabled || mmu_match_ttr(addr,regs.s!=0,data) == TTR_NO_MATCH) && regs.mmu_enabled) {
 #if MMU_DPAGECACHE
@@ -391,11 +489,13 @@ static ALWAYS_INLINE uae_u8 mmu_get_byte(uaecptr addr, bool data, int size)
 		}
 #endif
 }
+	PT_TLB_FILL(mem_host_read)
 	return x_phys_get_byte(addr);
 }
 
 static ALWAYS_INLINE void mmu_put_long(uaecptr addr, uae_u32 val, bool data, int size)
 {
+	PT_TLB_STORE_LOOKUP((data ? PT_TLB_WRITE : -1), x_phys_put_long, do_put_mem_long)
 	mmu_cache_state = cache_default_data;
 	if ((!mmu_ttr_enabled || mmu_match_ttr_write(addr,regs.s!=0,data,val,size) == TTR_NO_MATCH) && regs.mmu_enabled) {
 #if MMU_DPAGECACHE
@@ -417,11 +517,13 @@ static ALWAYS_INLINE void mmu_put_long(uaecptr addr, uae_u32 val, bool data, int
 		}
 #endif
 	}
+	PT_TLB_FILL_WRITE()
 	x_phys_put_long(addr, val);
 }
 
 static ALWAYS_INLINE void mmu_put_word(uaecptr addr, uae_u16 val, bool data, int size)
 {
+	PT_TLB_STORE_LOOKUP((data ? PT_TLB_WRITE : -1), x_phys_put_word, do_put_mem_word)
 	mmu_cache_state = cache_default_data;
 	if ((!mmu_ttr_enabled || mmu_match_ttr_write(addr,regs.s!=0,data,val,size) == TTR_NO_MATCH) && regs.mmu_enabled) {
 #if MMU_DPAGECACHE
@@ -443,11 +545,13 @@ static ALWAYS_INLINE void mmu_put_word(uaecptr addr, uae_u16 val, bool data, int
 		}
 #endif
 	}
+	PT_TLB_FILL_WRITE()
 	x_phys_put_word(addr, val);
 }
 
 static ALWAYS_INLINE void mmu_put_byte(uaecptr addr, uae_u8 val, bool data, int size)
 {
+	PT_TLB_STORE_LOOKUP((data ? PT_TLB_WRITE : -1), x_phys_put_byte, PT_HOST_PUT_BYTE)
 	mmu_cache_state = cache_default_data;
 	if ((!mmu_ttr_enabled || mmu_match_ttr_write(addr,regs.s!=0,data,val,size) == TTR_NO_MATCH) && regs.mmu_enabled) {
 #if MMU_DPAGECACHE
@@ -469,6 +573,7 @@ static ALWAYS_INLINE void mmu_put_byte(uaecptr addr, uae_u8 val, bool data, int 
 		}
 #endif
 	}
+	PT_TLB_FILL_WRITE()
 	x_phys_put_byte(addr, val);
 }
 
@@ -841,6 +946,91 @@ STATIC_INLINE uae_u32 get_long_mmu040 (uaecptr addr)
 {
 	return uae_mmu040_get_long (addr);
 }
+/* PreviousTurbo block cache: the handlers of cpuemu_36 read the instruction
+ * words from the host's copy of the code page, which was checked when the
+ * block was entered (a block's instructions never leave its page), and try
+ * the page cache before the full data access. */
+extern uintptr_t jit040_hdelta;
+#define JIT_IPTR(addr) ((uae_u8 *)(jit040_hdelta + (uae_u32)(addr)))
+STATIC_INLINE uae_u32 get_ibyte_jit (int o)
+{
+	return do_get_mem_word (JIT_IPTR (m68k_getpci () + o));
+}
+STATIC_INLINE uae_u32 get_iword_jit (int o)
+{
+	return do_get_mem_word (JIT_IPTR (m68k_getpci () + o));
+}
+STATIC_INLINE uae_u32 get_ilong_jit (int o)
+{
+	return do_get_mem_long (JIT_IPTR (m68k_getpci () + o));
+}
+STATIC_INLINE uae_u32 next_iword_jit (void)
+{
+	uae_u32 pc = m68k_getpci ();
+	m68k_incpci (2);
+	return do_get_mem_word (JIT_IPTR (pc));
+}
+STATIC_INLINE uae_u32 next_ilong_jit (void)
+{
+	uae_u32 pc = m68k_getpci ();
+	m68k_incpci (4);
+	return do_get_mem_long (JIT_IPTR (pc));
+}
+/* The full accesses, kept out of line */
+extern uae_u32 jit040_get_byte (uaecptr addr);
+extern uae_u32 jit040_get_word (uaecptr addr);
+extern uae_u32 jit040_get_long (uaecptr addr);
+extern void jit040_put_byte (uaecptr addr, uae_u32 v);
+extern void jit040_put_word (uaecptr addr, uae_u32 v);
+extern void jit040_put_long (uaecptr addr, uae_u32 v);
+/* The host address of a data access the page cache can do directly, or NULL */
+static ALWAYS_INLINE uae_u8 *pt_tlb_host (int type, uaecptr addr, int size)
+{
+	struct pt_tlb_entry *pte = PT_TLB_SLOT (type, addr);
+	if (likely (pte->tag == PT_TLB_TAG (addr) && pte->host) && (int)(addr & 0xfff) <= 0x1000 - size)
+		return pte->host + (addr & 0xfff);
+	return NULL;
+}
+STATIC_INLINE uae_u32 get_byte_jit (uaecptr addr)
+{
+	uae_u8 *p = pt_tlb_host (PT_TLB_READ, addr, 1);
+	return p ? *p : jit040_get_byte (addr);
+}
+STATIC_INLINE uae_u32 get_word_jit (uaecptr addr)
+{
+	uae_u8 *p = pt_tlb_host (PT_TLB_READ, addr, 2);
+	return p ? do_get_mem_word (p) : jit040_get_word (addr);
+}
+STATIC_INLINE uae_u32 get_long_jit (uaecptr addr)
+{
+	uae_u8 *p = pt_tlb_host (PT_TLB_READ, addr, 4);
+	return p ? do_get_mem_long (p) : jit040_get_long (addr);
+}
+STATIC_INLINE void put_byte_jit (uaecptr addr, uae_u32 v)
+{
+	uae_u8 *p = pt_tlb_host (PT_TLB_WRITE, addr, 1);
+	if (p)
+		*p = (uae_u8)v;
+	else
+		jit040_put_byte (addr, v);
+}
+STATIC_INLINE void put_word_jit (uaecptr addr, uae_u32 v)
+{
+	uae_u8 *p = pt_tlb_host (PT_TLB_WRITE, addr, 2);
+	if (p)
+		do_put_mem_word (p, v);
+	else
+		jit040_put_word (addr, v);
+}
+STATIC_INLINE void put_long_jit (uaecptr addr, uae_u32 v)
+{
+	uae_u8 *p = pt_tlb_host (PT_TLB_WRITE, addr, 4);
+	if (p)
+		do_put_mem_long (p, v);
+	else
+		jit040_put_long (addr, v);
+}
+
 // normal 060
 STATIC_INLINE void put_byte_mmu060 (uaecptr addr, uae_u32 v)
 {

@@ -22,6 +22,7 @@ const char Timing_fileid[] = "Previous timing.c";
 #include "configuration.h"
 #include "log.h"
 #include "m68000.h"
+#include "cycInt.h"
 
 
 #define NUM_BLANKS 3
@@ -30,6 +31,8 @@ static const char* BLANKS[NUM_BLANKS] = {"main", "nd_main", "nd_video"};
 
 static uint64_t     cycleCounterStart;
 static uint64_t     cycleDivisor;
+static double       turboDivisor;   /* Turbo: cycles per microsecond the host runs */
+static double       baseDivisor;    /* what cycleCounterStart was set for */
 static uint64_t     perfCounterStart;
 static uint64_t     perfFrequency;
 static bool         perfCounterFreqInt;
@@ -42,6 +45,7 @@ static bool         currentIsRealtime;
 static uint64_t     hardClockExpected;
 static uint64_t     hardClockActual;
 static time_t       unixTimeStart;
+static time_t       hostTimeStart;
 static lock_t       timeLock;
 static uint64_t     saveTime;
 
@@ -54,6 +58,95 @@ static inline uint64_t Timing_GetRealTime(void) {
 		rt *= perfMultiplicator;
 	}
 	return rt;
+}
+
+/* Microseconds spent waiting for real time, for the speed shown */
+volatile uint64_t Timing_WaitedUs;
+
+static void Timing_Wait(int64_t us, uint64_t until) {
+	uint64_t start = Timing_GetRealTime();
+	if (us > 10000LL)
+		host_sleep_us(us);
+	else
+		while (Timing_GetRealTime() < until) {}
+	Timing_WaitedUs += Timing_GetRealTime() - start;
+}
+
+/* Turbo: the CPU is stopped until the next event, us from now; returns the
+ * microseconds slept */
+int64_t Timing_Idle(int64_t us) {
+	uint64_t start, slept;
+	if (us < 200) {
+		return 0;
+	}
+	start = Timing_GetRealTime();
+	host_sleep_us(us > 2000 ? 2000 : us);
+	slept = Timing_GetRealTime() - start;
+	Timing_WaitedUs += slept;
+	return (int64_t)slept;
+}
+
+/* Cycles per microsecond of the time counted in cycles. In Turbo it is as
+ * many as the host runs, so that the guest's clocks keep to real time
+ * however fast the CPU goes (Timing_Sync follows it). */
+double Timing_CyclesPerUs(void) {
+	return ConfigureParams.System.bFullSpeed ? turboDivisor : (double)cycleDivisor;
+}
+
+/* Turbo (from Timing_Sync, at 200 Hz): the time counted in cycles runs at
+ * half the speed the host runs the CPU at, but no slower than the real CPU
+ * and no faster than 12 times it, so it never falls behind real time: it is
+ * a little ahead, and waited for. It must not fall behind, as it would then
+ * jump forward when real time is used (in user mode), and the guest's kernel
+ * reads the 20-bit event counter on the assumption that it does not jump.
+ * OPENSTEP 4.2 also stops starting (in its ADB driver) at about 20 times the
+ * real CPU. The speed changes slowly, as the guest may time the CPU. */
+static void Timing_FollowHost(uint64_t realTime, int64_t offset) {
+	static uint64_t lastReal, lastCycles, lastIdle, lastWaited;
+	static double rate;
+	uint64_t real = realTime - lastReal;
+	uint64_t waited = Timing_WaitedUs - lastWaited;
+	uint64_t cycles = nCyclesMainCounter - lastCycles;
+	uint64_t idle = CycInt_IdleCycles - lastIdle;
+
+	if (lastReal && real > waited && cycles > idle && real - waited > 100) {
+		double now = (double)(cycles - idle) / (double)(real - waited);
+		rate = rate > 0 ? rate * 0.9 + now * 0.1 : now;
+	}
+	lastReal = realTime;
+	lastWaited = Timing_WaitedUs;
+	lastCycles = nCyclesMainCounter;
+	lastIdle = CycInt_IdleCycles;
+
+	if (offset < -2000) {
+		turboDivisor *= 0.5;           /* behind: at once */
+	} else if (rate > 0) {
+		double want = rate * 0.5;
+		if (want > 12.0 * cycleDivisor) {
+			want = 12.0 * cycleDivisor;
+		}
+		/* towards it by a tenth at a time */
+		turboDivisor += (want - turboDivisor) * 0.1;
+	}
+	if (turboDivisor < cycleDivisor) {
+		turboDivisor = cycleDivisor;
+	}
+}
+
+static uint64_t Timing_GetCycleTime(void) {
+	if (!ConfigureParams.System.bFullSpeed && baseDivisor == (double)cycleDivisor) {
+		return (nCyclesMainCounter - cycleCounterStart) / cycleDivisor;
+	}
+	/* the rate changed (Turbo): the time so far stays as it was */
+	if (baseDivisor != Timing_CyclesPerUs()) {
+		uint64_t now = (uint64_t)((nCyclesMainCounter - cycleCounterStart) / baseDivisor);
+		baseDivisor = Timing_CyclesPerUs();
+		cycleCounterStart = nCyclesMainCounter - (uint64_t)(now * baseDivisor);
+		if (!ConfigureParams.System.bFullSpeed) {
+			return (nCyclesMainCounter - cycleCounterStart) / cycleDivisor;
+		}
+	}
+	return (uint64_t)((nCyclesMainCounter - cycleCounterStart) / baseDivisor);
 }
 
 void Timing_Pause(bool pause) {
@@ -71,35 +164,42 @@ uint64_t Timing_GetTime(void) {
 	
 	/* switch to realtime if...
 	 * 1) ...realtime mode is enabled and...
-	 * 2) ...either we are running darkmatter or the m68k CPU is in user mode */
-	state = (osDarkmatter || !(regs.s)) && enableRealtime;
+	 * 2) ...either we are running darkmatter or the m68k CPU is in user mode
+	 * (Turbo times as realtime mode does) */
+	state = (osDarkmatter || !(regs.s)) && (enableRealtime || ConfigureParams.System.bFullSpeed);
 	
 	if (currentIsRealtime) {
 		hostTime = Timing_GetRealTime();
 	} else {
-		hostTime  = nCyclesMainCounter - cycleCounterStart;
-		hostTime /= cycleDivisor;
+		hostTime = Timing_GetCycleTime();
 	}
 	
 	if (currentIsRealtime != state) {
 		if (currentIsRealtime) {
 			/* switching from real-time to cycle-time */
-			cycleCounterStart = nCyclesMainCounter - hostTime * cycleDivisor;
+			baseDivisor = Timing_CyclesPerUs();
+			if (ConfigureParams.System.bFullSpeed) {
+				cycleCounterStart = nCyclesMainCounter - (uint64_t)(hostTime * baseDivisor);
+			} else {
+				cycleCounterStart = nCyclesMainCounter - hostTime * cycleDivisor;
+			}
 		} else {
 			/* switching from cycle-time to real-time */
 			int64_t realTimeOffset = hostTime - Timing_GetRealTime();
 			if (realTimeOffset > 0) {
 				/* if hostTime is in the future, wait until realTime is there as well */
-				if (realTimeOffset > 10000LL)
-					host_sleep_us(realTimeOffset);
-				else
-					while (Timing_GetRealTime() < hostTime) {}
+				Timing_Wait(realTimeOffset, hostTime);
 			}
 		}
 		currentIsRealtime = state;
 	}
 	
 	return hostTime;
+}
+
+/* Is the time read last the host's (not counted in cycles)? */
+bool Timing_IsRealtime(void) {
+	return currentIsRealtime;
 }
 
 void Timing_GetTimes(uint64_t* realTime, uint64_t* hostTime) {
@@ -115,8 +215,13 @@ void Timing_Sync(void) {
 	saveTime = hostTime; /* save hostTime to be read by other threads */
 	host_unlock(&timeLock);
 	realTimeOffset = hostTime - realTime;
+	if (ConfigureParams.System.bFullSpeed) {
+		Timing_FollowHost(realTime, realTimeOffset);
+	}
 	if (realTimeOffset > 0) {
+		uint64_t start = Timing_GetRealTime();
 		host_sleep_us(realTimeOffset);
+		Timing_WaitedUs += Timing_GetRealTime() - start;
 	}
 }
 
@@ -129,17 +234,14 @@ uint64_t Timing_GetSaveTime(void) {
 	return hostTime / 1000000ULL;
 }
 
-/* Return current time as seconds */
-static uint64_t Timing_GetTimeSec(void) {
-	return Timing_GetTime() / 1000000ULL;
-}
-
+/* The real-time clock keeps time as on battery, by the host's clock: from
+ * the host's time at power on, moved only when the guest sets it */
 time_t Timing_GetUnixTime(void) {
-	return unixTimeStart + Timing_GetTimeSec();
+	return unixTimeStart + (time(NULL) - hostTimeStart);
 }
 
 void Timing_SetUnixTime(time_t now) {
-	unixTimeStart = now - Timing_GetTimeSec();
+	unixTimeStart = now - (time(NULL) - hostTimeStart);
 }
 
 struct tm* Timing_GetUnixTimeStruct(void) {
@@ -275,6 +377,7 @@ void Timing_Reset(void) {
 	pauseTimeStamp    = perfCounterStart;
 	perfFrequency     = host_get_counter_frequency();
 	unixTimeStart     = time(NULL);
+	hostTimeStart     = time(NULL);
 	cycleCounterStart = 0;
 	currentIsRealtime = false;
 	hardClockExpected = 0;
@@ -288,6 +391,8 @@ void Timing_Reset(void) {
 	}
 	
 	cycleDivisor = ConfigureParams.System.nCpuFreq;
+	turboDivisor = cycleDivisor;
+	baseDivisor  = cycleDivisor;
 	
 	perfCounterFreqInt = (perfFrequency % 1000000ULL) == 0;
 	perfDivisor        = perfFrequency / 1000000ULL;

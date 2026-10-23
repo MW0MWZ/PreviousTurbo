@@ -12,6 +12,7 @@ const char M68000_fileid[] = "Previous m68000.c";
 #include "m68000.h"
 #include "cpummu.h"
 #include "cpummu030.h"
+#include "jit040.h"
 
 
 /**
@@ -63,6 +64,31 @@ void M68000_CheckInterrupt(void)
 	M68000_SetSpecial(SPCFLAG_INT);
 }
 
+
+/*-----------------------------------------------------------------------*/
+/**
+ * Turbo switched on or off (from the emulator thread): the MMU's page
+ * cache follows it.
+ */
+volatile uint64_t M68000_CyclesRun;
+volatile uint64_t M68000_StoppedUs;
+
+void M68000_CheckSpeed(void)
+{
+	bool jit;
+
+	if (pt_tlb_on != ConfigureParams.System.bFullSpeed) {
+		pt_tlb_flush();
+		pt_tlb_on = ConfigureParams.System.bFullSpeed;
+	}
+	/* the block cache with the 68040 MMU, when memory is accessed directly */
+	jit = pt_tlb_on && ConfigureParams.System.bJIT && pt_tlb_direct &&
+		currprefs.cpu_model == 68040 && currprefs.mmu_model;
+	if (jit040_active != jit) {
+		jit040_set_active(jit);
+		M68000_SetSpecial(SPCFLAG_JIT040);
+	}
+}
 
 /*-----------------------------------------------------------------------*/
 /**

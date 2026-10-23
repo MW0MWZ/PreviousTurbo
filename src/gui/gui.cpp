@@ -203,6 +203,14 @@ void show_screen(int slot) {
 
 }  // namespace
 
+void toggle_turbo() {
+    ConfigureParams.System.bFullSpeed = !ConfigureParams.System.bFullSpeed;
+    Statusbar_AddMessage(ConfigureParams.System.bFullSpeed ? "Turbo on: as fast as the host can go, fast disks"
+                                                           : "Turbo off: back to the set speed",
+                         0);
+    wake(2);
+}
+
 std::vector<MenuEntry> media_menu();      // settings.cpp
 void open_settings_file();                // settings.cpp
 void save_settings_file();                // settings.cpp
@@ -218,6 +226,8 @@ std::vector<MenuEntry> menus() {
     machine.push_back(E::separator());
     machine.push_back(action("Pause", SHORTCUT_PAUSE, true, !bEmulationActive)
                           .tip("Stops the machine where it is until chosen again"));
+    machine.push_back(E::item("Turbo", [] { toggle_turbo(); }, true, ConfigureParams.System.bFullSpeed)
+                          .tip("Runs the machine as fast as the host can go, with fast disks, until chosen again"));
     machine.push_back(action("Cold Reset", SHORTCUT_COLDRESET)
                           .tip("Restarts the machine at once, as switching it off and on"));
     machine.push_back(E::separator());
@@ -463,8 +473,7 @@ void Gui_Frame(void) {
     }
     if (s.repaint) {
         s.repaint = false;
-        Screen_UpdatePictures();
-        wake(1);
+        if (Screen_UpdatePictures()) wake(1);
     }
     if (s.pending_frames <= 0) return;
     --s.pending_frames;
