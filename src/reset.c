@@ -44,6 +44,7 @@ const char Reset_fileid[] = "Hatari reset.c";
  */
 static int Reset_NeXT(bool bCold)
 {
+	Pointer_Reset();              /* the guest's pointer: looked for again */
 	if (bCold) {
 		int ret = memory_init();  /* Reset memory */
 		if (ret) {

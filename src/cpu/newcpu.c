@@ -3810,9 +3810,50 @@ kludge_me_do:
 }
 
 // address = format $2 stack frame address field
+/* Turbo: a byte of the user program's memory, through the page cache only
+ * (-1 if it is not there) */
+static int guest_user_byte(uaecptr addr)
+{
+	struct pt_tlb_entry *e = PT_TLB_SLOT(PT_TLB_READ, addr);
+
+	if (e->tag != PT_TLB_TAG(addr) || !e->host)
+		return -1;
+	return e->host[addr & 0xfff];
+}
+
+/* Turbo: NeXTSTEP's and OPENSTEP's execve (TRAP #4, call 59, the path in the
+ * fourth word on the stack): from the WindowServer to Workspace, the start-up
+ * guard (Timing_StartupGuard) */
+static void guest_execve(void)
+{
+	char path[64];
+	uaecptr p = 0;
+	int i, c;
+
+	for (i = 0; i < 4; i++) {
+		c = guest_user_byte(regs.regs[15] + 12 + i);
+		if (c < 0)
+			return;
+		p = (p << 8) | c;
+	}
+	for (i = 0; i < (int)sizeof(path) - 1; i++) {
+		c = guest_user_byte(p + i);
+		if (c <= 0)
+			break;
+		path[i] = (char)c;
+	}
+	path[i] = 0;
+	if (!strcmp(path, "/usr/lib/NextStep/WindowServer"))
+		Timing_StartupGuard(true);
+	else if (strstr(path, "/Workspace.app/Workspace"))
+		Timing_StartupGuard(false);
+}
+
 static void ExceptionX (int nr, uaecptr address, uaecptr oldpc)
 {
 	uaecptr pc = m68k_getpc();
+	if (nr == 36 && regs.regs[0] == 59 && !regs.s && pt_tlb_on && ConfigureParams.System.bFullSpeed)
+		guest_execve();
 #ifdef CPUEMU_36
 	/* the block cache's self-test compares instructions up to here */
 	if (unlikely(jit040_selftesting))

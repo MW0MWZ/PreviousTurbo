@@ -12,45 +12,97 @@ runs, how quickly it boots, and how responsive it feels on the desktop.
 The name is a nod to both Previous and the NeXTstation Turbo. All the credit for
 the emulator itself belongs to the Previous authors.
 
-## Status
+## Changes from Previous
 
-PreviousTurbo is at its very beginning. It is based on Previous 4.5 (SVN trunk
-revision 1858). So far:
+PreviousTurbo is based on Previous 4.5 (SVN trunk revision 1858). With Turbo
+off, the machine is emulated as in Previous 4.5; what has changed is the window
+around it and, with Turbo on, the speed.
 
-- **A new window.** Menus (Machine, Media, View, Help), a status bar with the
-  drive, network, DSP and NeXTdimension lights and the speed (how many times
-  as fast as the real CPU it runs when busy), and a tabbed Settings window
-  replace the original full-screen dialogs. Every option of the original
-  dialogs is kept. On macOS the menus are in the system menu bar.
-- **Disks while running.** The Media menu inserts and ejects magneto-optical,
-  floppy and SCSI CD-ROM disks without opening the settings.
+### Speed
+
 - **Turbo.** The Turbo button in the status bar (also Machine > Turbo and
-  Settings > Machine) runs the CPU as fast as the host can go, with fast disk
-  transfers and a page cache in front of the 68040 MMU, while the machine's
-  clocks keep to real time, as in SiliconGhost: the guest's time passes as
-  the host's does, so its clock stays right and its own waits take as long
-  as on the real machine. Programs run at the host's full speed; the
-  kernel's code at half of it, and at most 12 times the real CPU's, so that
-  the time it counts never falls behind (OPENSTEP reads its microsecond
-  counter on the assumption that it does not jump). With Turbo off the
-  emulation is that of Previous 4.5.
+  Settings > Machine) runs the CPU as fast as the host can go, with fast
+  disk transfers, while the machine's clocks keep to real time, as in
+  SiliconGhost: the guest's time passes as the host's does, so its clock
+  stays right. It can be switched while the machine runs.
 - **JIT.** With Turbo, the 68040's code is compiled for the host's processor
   as it runs, on x86-64 (Linux, macOS, Windows) and AArch64 (macOS, Linux),
   with the MMU, faults and self-modifying code handled as before; anything it
-  does not compile runs as in the interpreter. It can be switched off in
-  Settings > Machine, next to Turbo.
-- **Clock.** The real-time clock keeps the host's time, as on battery: it is
-  set from the host's clock at power on and moves only when the guest sets
-  it. OPENSTEP 4.2 takes the date of its disk instead when the clock differs
+  does not compile runs as in the interpreter. Blocks that follow each other
+  are linked, condition flags are worked out only where they are needed, and
+  on x86-64 the 68040 registers a block uses most are kept in the host's
+  registers. It can be switched off in Settings > Machine, next to Turbo.
+- **MMU page cache.** With Turbo, a cache of translated pages sits in front
+  of the 68040 MMU, and plain RAM and ROM are read and written directly.
+- **Fast start-up.** Waits on the microsecond counter, which the ROM and the
+  kernel's DELAY use, are short: when the guest reads it again straight away,
+  it moves on faster, while the system timer that keeps the time of day
+  stays on real time, so OPENSTEP 4.2 starts in a few seconds. From the
+  WindowServer starting to Workspace starting (15 seconds at most), time is
+  counted at the real CPU's speed, as with Turbo and Variable off: at that
+  point OPENSTEP 4.2 has a race that, run fast on a busy host, could leave
+  the login waiting a minute. Programs run at the host's full speed; the
+  kernel's code at half of it, and at most 12 times the real CPU's, so that
+  the time it counts never falls behind (OPENSTEP reads its microsecond
+  counter on the assumption that it does not jump).
+- **Less host CPU.** Only the parts of the screen that changed are converted
+  and drawn, and nothing is drawn when nothing changed. While the NeXT's CPU
+  waits for an interrupt, and while the guest is ahead of real time, the host
+  sleeps instead of spinning.
+
+### Window
+
+- **A new window.** Menus (Machine, Media, View, Help), a status bar with the
+  power, drive, network, DSP and NeXTdimension lights and the speed (how
+  many times as fast as the real CPU it runs when busy), and a tabbed
+  Settings window replace the original full-screen dialogs. Every option of
+  the original dialogs is kept. On macOS the menus are in the system menu
+  bar. The file choosers are the system's own.
+- **Disks while running.** The Media menu inserts and ejects magneto-optical,
+  floppy and SCSI CD-ROM disks without opening the settings. CD-ROM images
+  can be raw (the .bin of a .bin/.cue pair) as well as plain (.iso).
+- **Files in Documents.** Settings, disk images and ROMs of your own are kept
+  in a PreviousTurbo folder in Documents on every system (see below), and
+  the NeXT ROMs come with the program.
+
+### Mouse and keyboard
+
+- **Capture on entry.** Once the system shows its pointer (the OPENSTEP
+  desktop), moving onto the screen captures the mouse, with the NeXT's
+  pointer going to where the host's came on, or to where you clicked, and
+  pushing it against an edge of the screen releases it there, as in
+  SiliconGhost (View > Capture Mouse on Entry).
+- **Ctrl+Alt+G** (Ctrl+Option+G on a Mac) releases the mouse; Ctrl-click no
+  longer does, so clicks always reach the NeXT. Screenshots move to
+  Ctrl+Alt+M. When another window takes the focus, the mouse is released and
+  any keys and buttons held are let go.
+
+### Clock
+
+- The real-time clock keeps the host's time, as on battery: it is set from
+  the host's clock at power on and moves only when the guest sets it.
+  OPENSTEP 4.2 takes the date of its disk instead when the clock differs
   from it by more than 90 days ("preposterous time in Real Time Clock"), as
   after a long time unused; set the date in OPENSTEP once, and from the next
   start it follows the host's clock.
-- **Cheaper screen updates.** Only the parts of the screen that changed are
-  converted and drawn, and nothing is drawn when nothing changed.
+
+### Building
+
+- The same CMake commands on Linux, macOS and Windows (MSYS2), with SDL3.
+  On macOS the build is an application bundle, and `cmake --install` makes a
+  self-contained, signed copy. Unit tests run with `ctest`.
+
+### Fixes
+
+- Choosing "None" in the monitor arrangement no longer writes outside its
+  array, and "Show at startup" is saved.
+- The flags saved for an instruction restart after an MMU fault can no
+  longer be lost.
 
 ## Plans
 
-- **CPU.** More of the 68040's instructions compiled by the JIT, and a
+- **CPU.** More of the 68040's instructions compiled by the JIT, registers
+  kept in the host's registers across linked blocks and on AArch64, and a
   faster FPU path.
 - **NeXTdimension.** A much faster i860.
 - **Sound.** Steadier audio at high speeds.
@@ -77,8 +129,12 @@ with the program. CD-ROM images can
 be plain (.iso) or raw (the .bin of a .bin/.cue pair).
 
 Click the emulated screen to lock the mouse into the window; **Ctrl+Alt+G**
-(Ctrl+Option+G on a Mac) releases it, as does switching to another window. Shortcuts are **Ctrl+Alt** and a letter (Ctrl+Option on a Mac),
-shown in the menus; **Help > Keyboard and Mouse** lists them, and
+(Ctrl+Option+G on a Mac) releases it, as does switching to another window.
+Once the system shows its pointer (the OPENSTEP desktop), moving onto the
+screen captures the mouse, the NeXT's pointer going to where the host's came
+on (or was clicked), and pushing it against an edge of the screen releases
+it there (**View > Capture Mouse on Entry**). Shortcuts are **Ctrl+Alt** and
+a letter (Ctrl+Option on a Mac), shown in the menus; **Help > Keyboard and Mouse** lists them, and
 **Settings > Keyboard** changes them.
 
 See [readme.previous.txt](readme.previous.txt) for the machines Previous

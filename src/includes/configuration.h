@@ -121,6 +121,7 @@ typedef struct
 typedef struct
 {
   bool bEnableAutoGrab;
+  bool bCaptureOnEntry;
   bool bEnableMapToKey;
   bool bEnableMacClick;
   bool bUseRawMotion;

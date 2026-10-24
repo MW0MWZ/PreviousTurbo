@@ -12,6 +12,7 @@ const char SDLscreen_fileid[] = "Previous sdlscreen.c";
 #include "configuration.h"
 #include "screen.h"
 #include "sdlscreen.h"
+#include "sdlpointer.h"
 #include "statusbar.h"
 #include "event.h"
 #include "dimension.hpp"
@@ -688,6 +689,7 @@ void Screen_SetMouseGrab(bool grab) {
 		SDL_SetWindowKeyboardGrab(sdlWindow, false);
 		SDL_SetWindowMouseGrab(sdlWindow, false);
 		Screen_SetTitle(NULL);
+		Pointer_Released();   /* the host's pointer to where the guest's is */
 	}
 }
 

@@ -185,6 +185,12 @@ static void rc_kill(int f)
 	}
 }
 
+/* The guest registers each block keeps in host registers (the backend's
+ * cache_host, BE_CACHED of them), chosen by how often a first pass over the
+ * block used them */
+static signed char cache_reg[16];
+static int cache_uses[16];
+
 #if defined(CPU_x86_64)
 #include "jit040_x86.h"
 #else
@@ -271,8 +277,11 @@ void jit040_link(struct jit040_block *from)
 		return;
 	to = jit040_find(regs.pc);
 	if (to && to->code && to->s == from->s && to->host_page == from->host_page) {
+		/* from the block's own code (not one chained to): its registers
+		 * are where they are wanted */
+		bool self = site >= (uae_u8 *)to->code && site < to->code_end;
 		be_write_begin();
-		be_link(site, to->chain);
+		be_link(site, self ? to->chain_self : to->chain);
 		be_write_end(site - 4, site + 4);
 	}
 }
@@ -1325,7 +1334,7 @@ static int flag_info(uae_u16 op, bool *reads)
 	return 0;
 }
 
-static uae_u8 *compile(struct jit040_block *b, int only_native)
+static uae_u8 *compile_pass(struct jit040_block *b, int only_native, bool dry)
 {
 	int needs[JIT040_MAX_INS];
 	struct ctx c;
@@ -1346,6 +1355,9 @@ static uae_u8 *compile(struct jit040_block *b, int only_native)
 	be_write_begin();
 
 	be_prologue(b);
+	be_cache_load();
+	be_target();
+	b->chain_self = cp;
 
 	/* the flags each instruction must set: all at the end of the block */
 	{
@@ -1438,8 +1450,35 @@ static uae_u8 *compile(struct jit040_block *b, int only_native)
 		/* nothing gained over the block cache alone */
 		return NULL;
 	}
+	if (dry)
+		return start;
+	b->code_end = cp;
 	code_used = (cp - code_buf + 15) & ~(size_t)15;
 	return start;
+}
+
+/* The block is compiled once to see which guest registers it uses most,
+ * then again with those in host registers */
+static uae_u8 *compile(struct jit040_block *b, int only_native)
+{
+	int k, f, least = jit040_selftesting ? 1 : 2;
+
+	memset(cache_reg, -1, sizeof(cache_reg));
+	memset(cache_uses, 0, sizeof(cache_uses));
+	if (BE_CACHED && compile_pass(b, only_native, true)) {
+		for (k = 0; k < BE_CACHED; k++) {
+			int best = -1;
+			for (f = 0; f < 16; f++) {
+				if (cache_reg[f] < 0 && cache_uses[f] >= least &&
+				    (best < 0 || cache_uses[f] > cache_uses[best]))
+					best = f;
+			}
+			if (best < 0)
+				break;
+			cache_reg[best] = cache_host[k];
+		}
+	}
+	return compile_pass(b, only_native, false);
 }
 
 bool jit040_compile(struct jit040_block *b)

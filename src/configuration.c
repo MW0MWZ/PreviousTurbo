@@ -91,6 +91,7 @@ static const struct Config_Tag configs_Keyboard[] =
 static const struct Config_Tag configs_Mouse[] =
 {
 	{ "bEnableAutoGrab", Bool_Tag, &ConfigureParams.Mouse.bEnableAutoGrab },
+	{ "bCaptureOnEntry", Bool_Tag, &ConfigureParams.Mouse.bCaptureOnEntry },
 	{ "bEnableMapToKey", Bool_Tag, &ConfigureParams.Mouse.bEnableMapToKey },
 	{ "bEnableMacClick", Bool_Tag, &ConfigureParams.Mouse.bEnableMacClick },
 	{ "bUseRawMotion",   Bool_Tag, &ConfigureParams.Mouse.bUseRawMotion },
@@ -476,6 +477,7 @@ void Configuration_SetDefault(void)
 	ConfigureParams.Mouse.fExpScale = 0.75;
 	ConfigureParams.Mouse.bUseRawMotion = false;
 	ConfigureParams.Mouse.bEnableAutoGrab = true;
+	ConfigureParams.Mouse.bCaptureOnEntry = true;
 	ConfigureParams.Mouse.bEnableMapToKey = false;
 	ConfigureParams.Mouse.bEnableMacClick = false;
 

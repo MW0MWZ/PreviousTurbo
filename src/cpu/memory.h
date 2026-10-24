@@ -28,6 +28,7 @@ extern uae_u8* NEXTVideo;
 #define VRAM_DIRTY_BLOCKS 8192
 extern volatile uae_u8 vram_dirty[VRAM_DIRTY_BLOCKS];
 extern uae_u8* NEXTRam;
+extern uae_u32 NEXTRamSize;   /* bytes allocated at NEXTRam */
 extern uae_u8* NEXTRom;
 extern uae_u8* NEXTIo;
 

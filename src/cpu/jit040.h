@@ -31,6 +31,8 @@ struct jit040_block {
 	uintptr_t hdelta;                /* host address - guest address */
 	jit040_code code;                /* native code, once the block is used often */
 	uae_u8 *chain;                   /* in it, where other blocks' code goes on */
+	uae_u8 *chain_self;              /* and its own, its registers loaded */
+	uae_u8 *code_end;
 	uae_u16 runs;                    /* times run before it has native code */
 	int n;
 	struct jit040_ins ins[];

@@ -11,7 +11,7 @@ endif()
 
 # The menus and dialogs are in ../gui
 add_library(GuiSdl
-    sdlaudio.c sdlevent.c sdlhost.c sdlkeymap.c sdlscreen.c
+    sdlaudio.c sdlevent.c sdlhost.c sdlkeymap.c sdlpointer.c sdlscreen.c
 )
 
 target_link_libraries(GuiSdl PRIVATE ${SDL3_LIBRARIES})

@@ -18,6 +18,7 @@ const char SDLevent_fileid[] = "Previous sdlevent.c";
 #include "sdlaudio.h"
 #include "sdlkeymap.h"
 #include "sdlscreen.h"
+#include "sdlpointer.h"
 #include "statusbar.h"
 #include "gui.h"
 #include "tablet.h"
@@ -172,6 +173,23 @@ void GuiEvent_WarpMouse(void) {
 
 /* ----------------------------------------------------------------------- */
 /**
+ * Motion for the machine's mouse, in its counts (sdlpointer.c steering it).
+ */
+void GuiEvent_SendMotion(int dx, int dy) {
+	SDL_Event event;
+	SDL_zero(event);
+	event.type = SDL_EVENT_MOUSE_MOTION;
+	event.motion.xrel = (float)dx;
+	event.motion.yrel = (float)dy;
+#ifdef ENABLE_RENDERING_THREAD
+	Keymap_MouseMove(&event.motion);
+#else
+	GuiEvent_PutEventQueue(&event);
+#endif
+}
+
+/* ----------------------------------------------------------------------- */
+/**
  * Handle mouse motion event.
  */
 static void GuiEvent_HandleMouseMotion(SDL_Event *pEvent) {
@@ -195,7 +213,18 @@ static void GuiEvent_HandleMouseMotion(SDL_Event *pEvent) {
 	}
 
 	if ((pEvent->motion.xrel != 0.0) || (pEvent->motion.yrel != 0.0)) {
-		if (ConfigureParams.Tablet.nTabletType && bTabletEnabled) {
+		bool tablet = ConfigureParams.Tablet.nTabletType && bTabletEnabled;
+		float rawX = pEvent->motion.xrel, rawY = pEvent->motion.yrel;
+		if (!tablet && !bGrabMouse) {
+			/* the free mouse: onto the screen it may be captured; where
+			 * the guest's pointer is known it is not moved meanwhile */
+			float x = nEvents > 0 ? mouse_event[nEvents - 1].motion.x : pEvent->motion.x;
+			float y = nEvents > 0 ? mouse_event[nEvents - 1].motion.y : pEvent->motion.y;
+			if (Pointer_Enter(x, y) || (ConfigureParams.Mouse.bCaptureOnEntry && Pointer_Known())) {
+				return;
+			}
+		}
+		if (tablet) {
 			/* Get last absolute position */
 			if (nEvents > 0) {
 				pEvent->motion.x = mouse_event[nEvents - 1].motion.x;
@@ -231,6 +260,11 @@ static void GuiEvent_HandleMouseMotion(SDL_Event *pEvent) {
 		/* Save new fraction */
 		fSavedFracX = pEvent->motion.xrel - (float)(int)pEvent->motion.xrel;
 		fSavedFracY = pEvent->motion.yrel - (float)(int)pEvent->motion.yrel;
+
+		if (!tablet && bGrabMouse &&
+		    Pointer_Motion(rawX, rawY, (int)pEvent->motion.xrel, (int)pEvent->motion.yrel)) {
+			return;
+		}
 
 		/* Done */
 #ifdef ENABLE_RENDERING_THREAD
@@ -314,6 +348,10 @@ static void GuiEvent_HandleEvent(SDL_Event *event) {
 			Gui_ReleaseHeld();
 			break;
 
+		case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+			Pointer_Leave();
+			break;
+
 		case SDL_EVENT_AUDIO_DEVICE_ADDED:
 			Audio_DeviceConnected(event->adevice.recording);
 			break;
@@ -346,6 +384,7 @@ static void GuiEvent_HandleEvent(SDL_Event *event) {
 				if (ConfigureParams.Mouse.bEnableAutoGrab && !bGrabMouse) {
 					bGrabMouse = true;
 					Screen_SetMouseGrab(bGrabMouse);
+					Pointer_CaptureAt(event->button.x, event->button.y);  /* the guest's pointer to the click */
 					break;
 				}
 				GuiEvent_PutEventQueue(event);
@@ -433,11 +472,17 @@ void GuiEvent_EventHandler(void) {
 	SDL_Event event;
 	bool events;
 
-	events = SDL_WaitEventTimeout(&event, Gui_WaitTimeMs());
+	int wait = Gui_WaitTimeMs();
+
+	if (Pointer_WaitMs() < wait) {
+		wait = Pointer_WaitMs();
+	}
+	events = SDL_WaitEventTimeout(&event, wait);
 	while (events) {
 		GuiEvent_HandleEvent(&event);
 		events = SDL_PollEvent(&event);
 	}
+	Pointer_Frame();
 	Gui_Frame();
 	Gui_RunPosted();
 }

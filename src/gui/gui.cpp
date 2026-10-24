@@ -261,6 +261,10 @@ std::vector<MenuEntry> menus() {
     }
     view.push_back(E::separator());
     view.push_back(action("Capture Mouse", SHORTCUT_MOUSEGRAB, true, bGrabMouse));
+    view.push_back(E::item("Capture Mouse on Entry",
+                           [] { ConfigureParams.Mouse.bCaptureOnEntry = !ConfigureParams.Mouse.bCaptureOnEntry; }, true,
+                           ConfigureParams.Mouse.bCaptureOnEntry)
+                       .tip("Capture the mouse when the pointer moves onto the screen (once the system shows its pointer)"));
     view.push_back(E::separator());
     view.push_back(action("Save Screenshot", SHORTCUT_SCREENSHOT));
     view.push_back(action("Record Sound", SHORTCUT_RECORD, true, bRecordingAiff));
@@ -360,6 +364,9 @@ bool Gui_HandleEvent(SDL_Event* event) {
         wake(2);
         return true;
     }
+    // The emulator's repaint, at each vertical blank, is not ImGui's: it
+    // draws a frame only if the screen changed (Gui_Frame).
+    if (event->type >= SDL_EVENT_USER && event->user.code == SPECIAL_EVENT_REPAINT) return false;
     const bool input = is_input(event->type);
     SDL_Window* from = SDL_GetWindowFromEvent(event);
     const bool other_window = from && from != s.window;

@@ -843,6 +843,11 @@ static uae_u8 *be_jcc68(int cc, int when_true)
 	return b_cond(when_true ? holds : holds ^ 1);
 }
 
+/* No guest registers are kept in host registers here yet */
+#define BE_CACHED 0
+static const int cache_host[1] = { 0 };
+static void be_cache_load(void) { }
+
 /* Dn.w -= 1; jumps if it was 0 */
 static uae_u8 *be_dbcc_dec(int f)
 {

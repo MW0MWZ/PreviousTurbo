@@ -33,6 +33,7 @@ static uint64_t     cycleCounterStart;
 static uint64_t     cycleDivisor;
 static double       turboDivisor;   /* Turbo: cycles per microsecond the host runs */
 static double       baseDivisor;    /* what cycleCounterStart was set for */
+static uint64_t     startupGuard;   /* Turbo: real time when the guard ends, or 0 */
 static uint64_t     perfCounterStart;
 static uint64_t     perfFrequency;
 static bool         perfCounterFreqInt;
@@ -63,12 +64,23 @@ static inline uint64_t Timing_GetRealTime(void) {
 /* Microseconds spent waiting for real time, for the speed shown */
 volatile uint64_t Timing_WaitedUs;
 
+/* How late the host's sleep wakes up, in microseconds, as last seen: a short
+ * wait sleeps for all but that much and spins the rest */
+static int64_t sleepLate = 1000;
+
 static void Timing_Wait(int64_t us, uint64_t until) {
 	uint64_t start = Timing_GetRealTime();
 	if (us > 10000LL)
 		host_sleep_us(us);
-	else
+	else {
+		if (us > 2 * sleepLate + 100) {
+			int64_t ask = us - sleepLate - 50, late;
+			host_sleep_us(ask);
+			late = (int64_t)(Timing_GetRealTime() - start) - ask;
+			sleepLate += ((late > 0 ? late : 0) - sleepLate) / 8;
+		}
 		while (Timing_GetRealTime() < until) {}
+	}
 	Timing_WaitedUs += Timing_GetRealTime() - start;
 }
 
@@ -128,8 +140,26 @@ static void Timing_FollowHost(uint64_t realTime, int64_t offset) {
 		/* towards it by a tenth at a time */
 		turboDivisor += (want - turboDivisor) * 0.1;
 	}
-	if (turboDivisor < cycleDivisor) {
+	if (turboDivisor < cycleDivisor || startupGuard) {
 		turboDivisor = cycleDivisor;
+	}
+	if (startupGuard && realTime > startupGuard) {
+		startupGuard = 0;
+	}
+}
+
+/* Turbo: while the guest logs in at start-up (from the WindowServer to
+ * Workspace, but no longer than STARTUP_GUARD_US), its time is counted in
+ * cycles at the real CPU's speed, for programs as for the kernel, as with
+ * Turbo and Variable speed off. OPENSTEP 4.2 has a race there: lookupd exits
+ * as loginwindow starts, and if the name server gives loginwindow lookupd's
+ * port before it has seen that the port is gone, loginwindow waits a minute
+ * for an answer. Timed as on the real machine, it does not lose it. */
+#define STARTUP_GUARD_US  15000000
+void Timing_StartupGuard(bool on) {
+	startupGuard = on ? Timing_GetRealTime() + STARTUP_GUARD_US : 0;
+	if (on) {
+		turboDivisor = cycleDivisor;   /* at once */
 	}
 }
 
@@ -166,7 +196,7 @@ uint64_t Timing_GetTime(void) {
 	 * 1) ...realtime mode is enabled and...
 	 * 2) ...either we are running darkmatter or the m68k CPU is in user mode
 	 * (Turbo times as realtime mode does) */
-	state = (osDarkmatter || !(regs.s)) && (enableRealtime || ConfigureParams.System.bFullSpeed);
+	state = (osDarkmatter || !(regs.s)) && (enableRealtime || (ConfigureParams.System.bFullSpeed && !startupGuard));
 	
 	if (currentIsRealtime) {
 		hostTime = Timing_GetRealTime();
@@ -380,6 +410,7 @@ void Timing_Reset(void) {
 	hostTimeStart     = time(NULL);
 	cycleCounterStart = 0;
 	currentIsRealtime = false;
+	startupGuard      = 0;
 	hardClockExpected = 0;
 	hardClockActual   = 0;
 	enableRealtime    = ConfigureParams.System.bRealtime;

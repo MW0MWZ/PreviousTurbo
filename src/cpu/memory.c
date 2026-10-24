@@ -81,6 +81,7 @@ const char Memory_fileid[] = "Previous memory.c";
 /* Pointers to memory */
 uae_u8* NEXTVideo = NULL;
 uae_u8* NEXTRam   = NULL;
+uae_u32 NEXTRamSize;
 uae_u8* NEXTRom   = NULL;
 uae_u8* NEXTIo    = NULL;
 
@@ -1103,6 +1104,7 @@ int memory_init (void)
 	
 	/* Allocate memory */
 	NEXTRam   = malloc_aligned(ram_size);
+	NEXTRamSize = NEXTRam ? ram_size : 0;
 	NEXTVideo = malloc_aligned(vram_size);
 	for (i = 0; i < VRAM_DIRTY_BLOCKS; i++) {
 		vram_dirty[i] = 1;  /* new video memory: show all of it */

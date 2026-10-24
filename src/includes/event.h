@@ -29,6 +29,7 @@ extern void GuiEvent_SendSpecialEvent(int type);
 extern void GuiEvent_SendGuiRequest(void *request);
 extern void GuiEvent_ResetKeys(void);
 extern void GuiEvent_WarpMouse(void);
+extern void GuiEvent_SendMotion(int dx, int dy);
 extern void GuiEvent_EventHandler(void);
 extern void GuiEvent_EventQueueHandler(void);
 

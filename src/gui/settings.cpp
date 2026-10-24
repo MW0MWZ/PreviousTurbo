@@ -1096,6 +1096,8 @@ void tab_mouse() {
     ImGui::Checkbox("Use raw mouse movement data if available", &m.bUseRawMotion);
     ImGui::Separator();
     ImGui::Checkbox("Enable auto-locking (click the screen to lock the mouse)", &m.bEnableAutoGrab);
+    ImGui::Checkbox("Capture the mouse when the pointer moves onto the screen", &m.bCaptureOnEntry);
+    ImGui::TextDisabled("Once the system shows its pointer; pushing it against an edge of the screen releases it");
     ImGui::Checkbox("Map Ctrl-click to right-click", &m.bEnableMacClick);
     ImGui::Checkbox("Map scroll wheel to arrow keys", &m.bEnableMapToKey);
     ImGui::Separator();

@@ -9,7 +9,9 @@
   rbx holds &regs, and everything the code uses is reached from it (it is
   all in the program's data, close by); r15d counts the cycles. The virtual
   registers are r8d (V0), r10d (V1), ecx (VA, addresses), r11d (VJ, jump
-  targets) and r9d (VI, indexes); rax and rdx are the code's own.
+  targets) and r9d (VI, indexes); rax and rdx are the code's own. r12d,
+  r13d, r14d and ebp hold the guest registers the block uses most (see
+  cache_reg), written through to regs as well.
 
   regflags.cznv here has the layout of machdep/m68k.h for x86 hosts
   (SAHF_SETO_PROFITABLE): LAHF's flags in bits 8-15 and SETO's in bit 0, so
@@ -57,6 +59,13 @@ static int32_t field(int f)
 	return f == F_PC ? o_pc : f == F_CZNV ? o_cznv : o_x;
 }
 
+/* The host registers that may hold guest registers, and which guest
+ * register each holds (cache_reg[f], -1 for none): set by the front end
+ * for each block. They are loaded when the block is entered and after a
+ * handler is called, and every write to the guest register is made to both. */
+#define BE_CACHED 4
+static const int cache_host[BE_CACHED] = { R12, R13, R14, RBP };
+
 static bool be_init(bool *mem_ok)
 {
 	if (sizeof(regflags.cznv) != 4 || sizeof(regflags.x) != 4 || sizeof(mmu_restart) != 1 ||
@@ -80,8 +89,8 @@ static bool be_init(bool *mem_ok)
 
 /* A fault in a handler called from the native code is taken with longjmp,
  * for which Windows unwinds the stack: it has to know the native code's
- * frame. Every block sets it up the same way (push rbx, push r15, push r12,
- * sub rsp,32), so one entry, with its unwind information at the start of
+ * frame. Every block sets it up the same way (push rbx, r15, r12, r13, r14,
+ * rbp, sub rsp,40), so one entry, with its unwind information at the start of
  * the code buffer, describes all of them. */
 static bool be_register_code(uae_u8 *buf, size_t size)
 {
@@ -89,13 +98,16 @@ static bool be_register_code(uae_u8 *buf, size_t size)
 	uae_u8 *ui = buf;
 
 	ui[0] = 1;                   /* version 1, no handler */
-	ui[1] = 9;                   /* size of the prologue */
-	ui[2] = 4;                   /* unwind codes, last first: */
+	ui[1] = 14;                  /* size of the prologue */
+	ui[2] = 7;                   /* unwind codes, last first: */
 	ui[3] = 0;                   /* no frame register */
-	ui[4] = 9; ui[5] = 2 | (3 << 4);    /* sub rsp, 32 (UWOP_ALLOC_SMALL, 4 * 8) */
-	ui[6] = 5; ui[7] = 0 | (12 << 4);   /* push r12 (UWOP_PUSH_NONVOL) */
-	ui[8] = 3; ui[9] = 0 | (15 << 4);   /* push r15 */
-	ui[10] = 1; ui[11] = 0 | (3 << 4);  /* push rbx */
+	ui[4] = 14; ui[5] = 2 | (4 << 4);   /* sub rsp, 40 (UWOP_ALLOC_SMALL, 5 * 8) */
+	ui[6] = 10; ui[7] = 0 | (5 << 4);   /* push rbp (UWOP_PUSH_NONVOL) */
+	ui[8] = 9; ui[9] = 0 | (14 << 4);   /* push r14 */
+	ui[10] = 7; ui[11] = 0 | (13 << 4); /* push r13 */
+	ui[12] = 5; ui[13] = 0 | (12 << 4); /* push r12 */
+	ui[14] = 3; ui[15] = 0 | (15 << 4); /* push r15 */
+	ui[16] = 1; ui[17] = 0 | (3 << 4);  /* push rbx */
 	rf.BeginAddress = CODE_START;
 	rf.EndAddress = (DWORD)size;
 	rf.UnwindData = 0;
@@ -222,6 +234,90 @@ static void mov_ri64(int r, uae_u64 v) { rex(1, 0, r); e8(0xb8 + (r & 7)); e64(v
 static void mov_rr32(int r, int b) { rex(0, b, r); e8(0x89); modrr(b, r); }  /* r = b */
 static void setcc(int cc, int r) { rex(0, 0, r); e8(0x0f); e8(0x90 + cc); modrr(0, r); }
 
+/* Guest registers: in their host register if cached (see cache_reg), and
+ * in regs. A write goes to both; byte operations on a host register always
+ * have a REX prefix, so that 4 to 7 are spl to dil, not ah to bh. */
+
+static int cached(int f)
+{
+	if (f >= 16)
+		return -1;
+	cache_uses[f]++;
+	return cache_reg[f];
+}
+static void rex_h(int r, int b) { e8(0x40 | ((r >> 3) << 2) | (b >> 3)); }
+
+/* r = f, zero extended from size sz */
+static void ld_f(int sz, int r, int f)
+{
+	int h = cached(f);
+
+	if (h < 0) {
+		ldz(sz, r, field(f));
+	} else if (sz == 4) {
+		mov_rr32(r, h);
+	} else {
+		rex_h(r, h); e8(0x0f); e8(sz == 1 ? 0xb6 : 0xb7); modrr(r, h);
+	}
+}
+/* r = f, sign extended from size sz (1 or 2) */
+static void ldsx_f(int sz, int r, int f)
+{
+	int h = cached(f);
+
+	if (h < 0) {
+		movsx_m(sz, r, field(f));
+	} else {
+		rex_h(r, h); e8(0x0f); e8(sz == 1 ? 0xbe : 0xbf); modrr(r, h);
+	}
+}
+/* f = r, size sz (the rest of f kept) */
+static void st_f(int sz, int f, int r)
+{
+	int h = cached(f);
+
+	if (h >= 0) {
+		if (sz == 2)
+			e8(0x66);
+		rex_h(r, h); e8(sz == 1 ? 0x88 : 0x89); modrr(r, h);
+	}
+	st(sz, field(f), r);
+}
+/* f = v, size sz */
+static void sti_f(int sz, int f, uae_u32 v)
+{
+	int h = cached(f);
+
+	if (h >= 0) {
+		if (sz == 1) {
+			rex_h(0, h); e8(0xb0 + (h & 7)); e8(v);
+		} else if (sz == 2) {
+			e8(0x66); rex_h(0, h); e8(0xb8 + (h & 7)); e16(v);
+		} else {
+			mov_ri(h, v);
+		}
+	}
+	if (sz == 1)
+		st8i(field(f), v);
+	else if (sz == 2)
+		st16i(field(f), v);
+	else
+		st32i(field(f), v);
+}
+/* r op= f, size sz */
+static void alu_rf(int sz, int op, int r, int f)
+{
+	int h = cached(f);
+
+	if (h < 0) {
+		alu_rm(sz, op, r, field(f));
+		return;
+	}
+	if (sz == 2)
+		e8(0x66);
+	rex_h(h, r); e8(op + (sz == 1 ? 0 : 1)); modrr(h, r);
+}
+
 /* code that may be skipped, while nothing jumps to where cp is: the last
  * cycle count added (merged with the next one), regflags still in eax */
 static uae_u8 *cyc_start, *cyc_end, *cznv_in_eax;
@@ -280,8 +376,13 @@ static void be_prologue(struct jit040_block *b)
 	e8(0x53);                    /* push rbx */
 	e8(0x41); e8(0x57);          /* push r15 */
 	e8(0x41); e8(0x54);          /* push r12 */
+	e8(0x41); e8(0x55);          /* push r13 */
+	e8(0x41); e8(0x56);          /* push r14 */
+	e8(0x55);                    /* push rbp */
 #ifdef _WIN32
-	e8(0x48); e8(0x83); e8(0xec); e8(0x20);   /* sub rsp, 32 */
+	e8(0x48); e8(0x83); e8(0xec); e8(0x28);   /* sub rsp, 40 */
+#else
+	e8(0x48); e8(0x83); e8(0xec); e8(0x08);   /* sub rsp, 8: aligned for calls */
 #endif
 	mov_ri64(RBX, (uintptr_t)&regs);
 	e8(0x45); e8(0x31); e8(0xff);             /* xor r15d, r15d */
@@ -291,13 +392,29 @@ static void be_epilogue(void)
 {
 	e8(0x44); e8(0x89); e8(0xf8);             /* mov eax, r15d */
 #ifdef _WIN32
-	e8(0x48); e8(0x83); e8(0xc4); e8(0x20);   /* add rsp, 32 */
+	e8(0x48); e8(0x83); e8(0xc4); e8(0x28);   /* add rsp, 40 */
+#else
+	e8(0x48); e8(0x83); e8(0xc4); e8(0x08);   /* add rsp, 8 */
 #endif
+	e8(0x5d);                    /* pop rbp */
+	e8(0x41); e8(0x5e);          /* pop r14 */
+	e8(0x41); e8(0x5d);          /* pop r13 */
 	e8(0x41); e8(0x5c);          /* pop r12 */
 	e8(0x41); e8(0x5f);          /* pop r15 */
 	e8(0x5b);                    /* pop rbx */
 	e8(0xc3);                    /* ret */
 }
+/* The cached guest registers from regs */
+static void be_cache_load(void)
+{
+	int f;
+
+	for (f = 0; f < 16; f++) {
+		if (cache_reg[f] >= 0)
+			ld32(cache_reg[f], field(f));
+	}
+}
+
 static void be_add_cycles(int n)
 {
 	bool keep = cp == cznv_in_eax;
@@ -327,11 +444,11 @@ static void be_ld(int sz, int v, int f)
 			if (u >= 0)
 				mov_rr32(vreg[v], vreg[u]);
 			else
-				ldz(4, vreg[v], field(f));
+				ld_f(4, vreg[v], f);
 			rc_f[v] = f;
 		}
 	} else {
-		ldz(sz, vreg[v], field(f));
+		ld_f(sz, vreg[v], f);
 		rc_f[v] = -1;
 	}
 	rc_end();
@@ -343,14 +460,14 @@ static void be_ldsx(int sz, int v, int f)
 		return;
 	}
 	rc_begin();
-	movsx_m(sz, vreg[v], field(f));
+	ldsx_f(sz, vreg[v], f);
 	rc_f[v] = -1;
 	rc_end();
 }
 static void be_st(int sz, int f, int v)
 {
 	rc_begin();
-	st(sz, field(f), vreg[v]);
+	st_f(sz, f, vreg[v]);
 	rc_kill(f);
 	if (sz == 4 && f < 16)
 		rc_f[v] = f;
@@ -359,12 +476,7 @@ static void be_st(int sz, int f, int v)
 static void be_sti(int sz, int f, uae_u32 v)
 {
 	rc_begin();
-	if (sz == 1)
-		st8i(field(f), v);
-	else if (sz == 2)
-		st16i(field(f), v);
-	else
-		st32i(field(f), v);
+	sti_f(sz, f, v);
 	rc_kill(f);
 	rc_end();
 }
@@ -380,7 +492,21 @@ static void be_sext(int sz, int v) { rc_begin(); movsx_rr(sz, vreg[v], vreg[v]);
 static void be_add(int v, int s) { rc_begin(); alu_rr(4, X_ADD, vreg[v], vreg[s]); rc_set(v); }
 static void be_addi(int v, uae_s32 x) { rc_begin(); if (x) alu_ri(4, X_ADD, vreg[v], (uae_u32)x); rc_set(v); }
 static void be_shli(int v, int n) { rc_begin(); shift_ri(4, X_SHL, vreg[v], n); rc_set(v); }
-static void be_field_addi(int f, uae_s32 x) { rc_begin(); alu_mi32(X_ADD, field(f), (uae_u32)x); rc_kill(f); rc_end(); }
+static void be_field_addi(int f, uae_s32 x)
+{
+	int h;
+
+	rc_begin();
+	h = cached(f);
+	if (h < 0) {
+		alu_mi32(X_ADD, field(f), (uae_u32)x);
+	} else {
+		alu_ri(4, X_ADD, h, (uae_u32)x);
+		st32(field(f), h);
+	}
+	rc_kill(f);
+	rc_end();
+}
 
 static void be_alu(int sz, int op, int v, int s, int fl)
 {
@@ -399,7 +525,7 @@ static void be_alui(int sz, int op, int v, uae_u32 x, int fl)
 static void be_alu_field(int sz, int op, int v, int f, int fl)
 {
 	rc_begin();
-	alu_rm(sz, xop_of[op], vreg[v], field(f));
+	alu_rf(sz, xop_of[op], vreg[v], f);
 	flags_after(fl);
 	rc_set(v);
 }
@@ -460,7 +586,7 @@ static void be_shift(int sz, int kind, int left, int v, int n, int f)
 	if (kind == 3) {
 		/* ROL, ROR: C is the last bit rotated, X is kept */
 		shift_ri(sz, left ? X_ROL : X_ROR, r, n);
-		st(sz, field(f), r);
+		st_f(sz, f, r);
 		setcc(CC_B, RDX);
 		test_rr(sz, r);
 		e8(0x9f);                         /* lahf */
@@ -478,7 +604,7 @@ static void be_shift(int sz, int kind, int left, int v, int n, int f)
 		else
 			movsx_rr(sz, R9, r);
 		shift_ri(sz, X_SHL, r, n);
-		st(sz, field(f), r);
+		st_f(sz, f, r);
 		e8(0x9f);                         /* lahf */
 		alu_ri(4, X_AND, RAX, HOST_F_C | HOST_F_Z | HOST_F_N);
 		shift_ri(4, X_SAR, R9, nbits - 1 - n);
@@ -493,7 +619,7 @@ static void be_shift(int sz, int kind, int left, int v, int n, int f)
 	}
 	/* LSL, LSR, ASR: V cleared */
 	shift_ri(sz, left ? X_SHL : kind == 0 ? X_SAR : X_SHR, r, n);
-	st(sz, field(f), r);
+	st_f(sz, f, r);
 	e8(0x9f);                             /* lahf */
 	alu_ri(4, X_AND, RAX, HOST_F_C | HOST_F_Z | HOST_F_N);
 	st32(o_cznv, RAX);
@@ -510,12 +636,12 @@ static void be_shift_reg(int sz, int kind, int left, int fc, int fv)
 	int n = sz * 8;
 	uae_u8 *shift, *done, *small;
 
-	ldz(4, RCX, field(fc));
+	ld_f(4, RCX, fc);
 	alu_ri(4, X_AND, RCX, 63);
 	if (kind == 0 && !left && sz != 4)
-		movsx_m(sz, R8, field(fv));
+		ldsx_f(sz, R8, fv);
 	else
-		ldz(sz, R8, field(fv));
+		ld_f(sz, R8, fv);
 	test_rr(4, RCX);
 	shift = jcc32(CC_NE);
 	test_rr(sz, R8);
@@ -564,7 +690,7 @@ static void be_shift_reg(int sz, int kind, int left, int fc, int fv)
 		rex(1, 0, R8); e8(0xc1); modrr(X_SHR, R8); e8(32);
 	}
 	alu_ri(4, X_AND, RDX, 1);                 /* C */
-	st(sz, field(fv), R8);
+	st_f(sz, fv, R8);
 	test_rr(sz, R8);
 	e8(0x9f);                                 /* lahf */
 	alu_ri(4, X_AND, RAX, HOST_F_N | HOST_F_Z);
@@ -583,7 +709,7 @@ static void be_rox(int sz, int left, int n, int f)
 {
 	int nbits = sz * 8;
 
-	ldz(sz, R8, field(f));
+	ld_f(sz, R8, f);
 	ld32(RDX, o_x);
 	alu_ri(4, X_AND, RDX, 1);
 	rex(1, 0, RDX); e8(0xc1); modrr(X_SHL, RDX); e8(nbits);
@@ -595,7 +721,7 @@ static void be_rox(int sz, int left, int n, int f)
 	rex(1, R8, RDX); e8(0x89); modrr(R8, RDX);       /* mov rdx, r8 */
 	rex(1, 0, RDX); e8(0xc1); modrr(X_SHR, RDX); e8(nbits);
 	alu_ri(4, X_AND, RDX, 1);                        /* C */
-	st(sz, field(f), R8);
+	st_f(sz, f, R8);
 	test_rr(sz, R8);
 	e8(0x9f);                                        /* lahf */
 	alu_ri(4, X_AND, RAX, HOST_F_N | HOST_F_Z);
@@ -614,11 +740,11 @@ static void be_mull(int is_signed, int wide, int fl, int fh)
 		rex(1, R10, R10); e8(0x63); modrr(R10, R10);
 	}
 	rex(1, R8, R10); e8(0x0f); e8(0xaf); modrr(R8, R10);   /* imul r8, r10 */
-	st(4, field(fl), R8);
+	st_f(4, fl, R8);
 	if (wide) {
 		rex(1, R8, RDX); e8(0x89); modrr(R8, RDX);   /* mov rdx, r8 */
 		rex(1, 0, RDX); e8(0xc1); modrr(X_SHR, RDX); e8(32);
-		st(4, field(fh), RDX);
+		st_f(4, fh, RDX);
 		rex(1, R8, R8); e8(0x85); modrr(R8, R8);     /* test r8, r8 */
 		e8(0x9f);                                    /* lahf */
 		alu_ri(4, X_AND, RAX, HOST_F_N | HOST_F_Z);
@@ -659,7 +785,14 @@ static void be_btst(int f, int bit)
 {
 	ld32(RDX, o_cznv);
 	alu_ri(4, X_AND, RDX, ~(uae_u32)HOST_F_Z);
-	e8(0xf7); mem(0, field(f)); e32(1u << bit);   /* test dword [Dn], bit */
+	{
+		int h = cached(f);
+		if (h < 0) {
+			e8(0xf7); mem(0, field(f)); e32(1u << bit);   /* test dword [Dn], bit */
+		} else {
+			test_ri32(h, 1u << bit);
+		}
+	}
 	setcc(CC_E, RAX);
 	movzx_rr8(RAX, RAX);
 	shift_ri(4, X_SHL, RAX, 14);
@@ -718,7 +851,14 @@ static uae_u8 *be_jcc68(int cc, int when_true)
 /* Dn.w -= 1; jumps if it was 0 */
 static uae_u8 *be_dbcc_dec(int f)
 {
-	e8(0x66); e8(0x83); mem(5, field(f)); e8(1);   /* sub word [Dn], 1 */
+	int h = cached(f);
+
+	if (h < 0) {
+		e8(0x66); e8(0x83); mem(5, field(f)); e8(1);   /* sub word [Dn], 1 */
+	} else {
+		e8(0x66); rex(0, 0, h); e8(0x83); modrr(5, h); e8(1);   /* sub h16, 1 */
+		st(2, field(f), h);                            /* (the flags kept) */
+	}
 	return jcc32(CC_B);
 }
 
@@ -786,6 +926,7 @@ static void be_call(struct ctx *c, struct jit040_ins *in, uaecptr pc, bool last)
 	e8(0x41); e8(0x01); e8(0xc7);             /* add r15d, eax */
 	if (last)
 		return;
+	be_cache_load();                          /* the handler may have changed them */
 	be_exit_if_attention(c);
 	e8(0x81); mem(7, o_pc); e32(pc + in->len);  /* cmp dword [pc], next */
 	exit_add(c, jcc32(CC_NE));
@@ -819,6 +960,7 @@ static void be_rejoin(struct stub *st)
 	if (st->cycles) {
 		e8(0x41); e8(0x81); e8(0xef); e32(st->cycles);   /* sub r15d, n */
 	}
+	be_cache_load();
 	for (v = 0; v < 5; v++) {
 		if (st->f[v] >= 0)
 			ldz(4, vreg[v], field(st->f[v]));

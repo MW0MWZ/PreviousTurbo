@@ -32,6 +32,7 @@ extern void Screen_StatusbarUpdate(void);
 extern bool Screen_ShowCursor(bool show);
 extern void Screen_CenterCursor(void);
 extern void Screen_Reset(void);
+extern void Pointer_Reset(void);   /* the guest's pointer is looked for again */
 
 #ifdef __cplusplus
 }
