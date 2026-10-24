@@ -360,6 +360,9 @@ bool Gui_HandleEvent(SDL_Event* event) {
         wake(2);
         return true;
     }
+    // The emulator's repaint, at each vertical blank, is not ImGui's: it
+    // draws a frame only if the screen changed (Gui_Frame).
+    if (event->type >= SDL_EVENT_USER && event->user.code == SPECIAL_EVENT_REPAINT) return false;
     const bool input = is_input(event->type);
     SDL_Window* from = SDL_GetWindowFromEvent(event);
     const bool other_window = from && from != s.window;

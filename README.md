@@ -25,15 +25,21 @@ revision 1858). So far:
 - **Disks while running.** The Media menu inserts and ejects magneto-optical,
   floppy and SCSI CD-ROM disks without opening the settings.
 - **Turbo.** The Turbo button in the status bar (also Machine > Turbo and
-  Settings > Machine) runs the CPU as fast as the host can go, with fast disk
-  transfers and a page cache in front of the 68040 MMU, while the machine's
-  clocks keep to real time, as in SiliconGhost: the guest's time passes as
-  the host's does, so its clock stays right and its own waits take as long
-  as on the real machine. Programs run at the host's full speed; the
-  kernel's code at half of it, and at most 12 times the real CPU's, so that
-  the time it counts never falls behind (OPENSTEP reads its microsecond
-  counter on the assumption that it does not jump). With Turbo off the
-  emulation is that of Previous 4.5.
+  Settings > Machine) runs the CPU as fast as the host can go, with fast
+  disk transfers and a page cache in front of the 68040 MMU, while the
+  machine's clocks keep to real time, as in SiliconGhost: the guest's time
+  passes as the host's does, so its clock stays right. Waits on the
+  microsecond counter, which the ROM and the kernel's DELAY use, are short:
+  when the guest reads it again straight away, it moves on faster, while the
+  system timer that keeps the time of day stays on real time, so OPENSTEP
+  4.2 starts in a few seconds. From the WindowServer starting to Workspace
+  starting (15 seconds at most), time is counted at the real CPU's speed, as
+  with Turbo and Variable off: at that point OPENSTEP 4.2 has a race that,
+  run fast on a busy host, could leave the login waiting a minute. Programs
+  run at the host's full speed; the kernel's code at half of it, and at most
+  12 times the real CPU's, so that the time it counts never falls behind
+  (OPENSTEP reads its microsecond counter on the assumption that it does not
+  jump). With Turbo off the emulation is that of Previous 4.5.
 - **JIT.** With Turbo, the 68040's code is compiled for the host's processor
   as it runs, on x86-64 (Linux, macOS, Windows) and AArch64 (macOS, Linux),
   with the MMU, faults and self-modifying code handled as before; anything it

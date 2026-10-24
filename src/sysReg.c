@@ -21,6 +21,7 @@ const char SysReg_fileid[] = "Previous sysReg.c";
 #include "bmap.h"
 #include "statusbar.h"
 #include "timing.h"
+#include "cycInt.h"
 
 #define LOG_SCR_LEVEL       LOG_DEBUG
 #define LOG_HARDCLOCK_LEVEL LOG_DEBUG
@@ -692,12 +693,26 @@ void HardclockReadCSR(void) {
 
 static uint64_t eventcounter_offset;
 
+/* Turbo: when the counter is read again straight away, the guest is waiting
+ * on it (DELAY, the ROM's waits), and it moves on faster, a little at each
+ * read: the waits are short, while the system timer, which keeps the time
+ * of day, stays on real time. */
+static uint64_t eventcounter_boost;
+static uint64_t eventcounter_last;
+#define EVENTCOUNTER_SPIN  4000   /* cycles since the last read */
+#define EVENTCOUNTER_STEP  500    /* microseconds added */
+
 void System_Timer_Read(void) {
-    IoMem_WriteLong(IoAccessCurrentAddress, (Timing_GetTime() - eventcounter_offset) & 0xFFFFF);
+    if (ConfigureParams.System.bFullSpeed && (IoAccessCurrentAddress & 3) == 0) {
+        if (nCyclesMainCounter - eventcounter_last < EVENTCOUNTER_SPIN)
+            eventcounter_boost += EVENTCOUNTER_STEP;
+        eventcounter_last = nCyclesMainCounter;
+    }
+    IoMem_WriteLong(IoAccessCurrentAddress, (Timing_GetTime() + eventcounter_boost - eventcounter_offset) & 0xFFFFF);
 }
 
 void System_Timer_Write(void) {
-    eventcounter_offset = Timing_GetTime(); /* Reset event counter (undocumented but required by dvt040) */
+    eventcounter_offset = Timing_GetTime() + eventcounter_boost; /* Reset event counter (undocumented but required by dvt040) */
 }
 
 /* Color Video Interrupt Register */
