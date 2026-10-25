@@ -5402,6 +5402,13 @@ static void resetvars (void)
 			dstw = "put_word_jit";
 			srcb = "get_byte_jit";
 			dstb = "put_byte_jit";
+			disp020 = "jit040_get_disp_ea_020";
+			srcblrmw = "jit040_get_lrmw_byte";
+			srcwlrmw = "jit040_get_lrmw_word";
+			srcllrmw = "jit040_get_lrmw_long";
+			dstblrmw = "jit040_put_lrmw_byte";
+			dstwlrmw = "jit040_put_lrmw_word";
+			dstllrmw = "jit040_put_lrmw_long";
 		}
 	} else if (using_mmu) {
 		// 68060 MMU
@@ -9231,6 +9238,9 @@ bccl_not68020:
 			if (using_mmu == 68060 && (curi->mnemo == i_BFCHG || curi->mnemo == i_BFCLR ||  curi->mnemo == i_BFSET ||  curi->mnemo == i_BFINS)) {
 				getb = "mmu060_get_rmw_bitfield";
 				putb = "mmu060_put_rmw_bitfield";
+			} else if (using_jit_fetch) {
+				getb = "jit040_get_bitfield";
+				putb = "jit040_put_bitfield";
 			} else if (using_mmu || using_ce020 || using_indirect > 0) {
 				getb = "x_get_bitfield";
 				putb = "x_put_bitfield";
@@ -9527,7 +9537,11 @@ bccl_not68020:
 				out("uaecptr mems = m68k_areg(regs, srcreg) & ~15, memd;\n");
 				out("dstreg = (%s >> 12) & 7;\n", gen_nextiword (0));
 				out("memd = m68k_areg(regs, dstreg) & ~15;\n");
-				if (using_mmu >= 68040) {
+				if (using_jit_fetch) {
+					out("uae_u32 v[4];\n");
+					out("jit040_get_move16 (mems, v);\n");
+					out("jit040_put_move16 (memd, v);\n");
+				} else if (using_mmu >= 68040) {
 					out("uae_u32 v[4];\n");
 					out("get_move16_mmu (mems, v);\n");
 					out("put_move16_mmu (memd, v);\n");
@@ -9549,7 +9563,10 @@ bccl_not68020:
 				/* Other variants */
 				genamode(curi, curi->smode, "srcreg", curi->size, "mems", 0, 2, 0);
 				genamode(curi, curi->dmode, "dstreg", curi->size, "memd", 0, 2, 0);
-				if (using_mmu == 68040) {
+				if (using_jit_fetch) {
+					out("jit040_get_move16 (memsa, mmu040_move16);\n");
+					out("jit040_put_move16 (memda, mmu040_move16);\n");
+				} else if (using_mmu == 68040) {
 					out("get_move16_mmu (memsa, mmu040_move16);\n");
 					out("put_move16_mmu (memda, mmu040_move16);\n");
 				} else if (using_mmu == 68060) {

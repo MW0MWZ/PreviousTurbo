@@ -49,6 +49,7 @@ static time_t       unixTimeStart;
 static time_t       hostTimeStart;
 static lock_t       timeLock;
 static uint64_t     saveTime;
+static unsigned     startUps;       /* Turbo: times the guest has started (the guard has been and gone) */
 
 
 static inline uint64_t Timing_GetRealTime(void) {
@@ -145,6 +146,7 @@ static void Timing_FollowHost(uint64_t realTime, int64_t offset) {
 	}
 	if (startupGuard && realTime > startupGuard) {
 		startupGuard = 0;
+		startUps++;
 	}
 }
 
@@ -157,6 +159,9 @@ static void Timing_FollowHost(uint64_t realTime, int64_t offset) {
  * for an answer. Timed as on the real machine, it does not lose it. */
 #define STARTUP_GUARD_US  15000000
 void Timing_StartupGuard(bool on) {
+	if (!on && startupGuard) {
+		startUps++;
+	}
 	startupGuard = on ? Timing_GetRealTime() + STARTUP_GUARD_US : 0;
 	if (on) {
 		turboDivisor = cycleDivisor;   /* at once */
@@ -235,6 +240,17 @@ bool Timing_IsRealtime(void) {
 void Timing_GetTimes(uint64_t* realTime, uint64_t* hostTime) {
 	*hostTime = Timing_GetTime();
 	*realTime = Timing_GetRealTime();
+}
+
+/* Real time in microseconds, which the time counted (Timing_GetTime) keeps to */
+uint64_t Timing_GetRealTimeUs(void) {
+	return Timing_GetRealTime();
+}
+
+/* Turbo: how many times the guest has started (its start-up guard been
+ * and gone) */
+unsigned Timing_StartUps(void) {
+	return startUps;
 }
 
 void Timing_Sync(void) {
@@ -411,6 +427,7 @@ void Timing_Reset(void) {
 	cycleCounterStart = 0;
 	currentIsRealtime = false;
 	startupGuard      = 0;
+	startUps          = 0;
 	hardClockExpected = 0;
 	hardClockActual   = 0;
 	enableRealtime    = ConfigureParams.System.bRealtime;

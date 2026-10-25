@@ -153,6 +153,186 @@ void jit040_put_long(uaecptr addr, uae_u32 v)
 		uae_mmu040_put_long(addr, v);
 }
 
+/* The other accesses of the cpuemu_36 handlers: the 68040 MMU's, but in the
+ * self-test, where they use the scratch page too */
+
+uae_u32 REGPARAM2 jit040_get_disp_ea_020(uae_u32 base, int idx)
+{
+	uae_u16 dp = next_iword_jit();
+	int reg = (dp >> 12) & 15;
+	uae_s32 regd = regs.regs[reg];
+
+	if ((dp & 0x800) == 0)
+		regd = (uae_s32)(uae_s16)regd;
+	regd <<= (dp >> 9) & 3;
+	if (dp & 0x100) {
+		uae_s32 outer = 0;
+		if (dp & 0x80)
+			base = 0;
+		if (dp & 0x40)
+			regd = 0;
+		if ((dp & 0x30) == 0x20)
+			base += (uae_s32)(uae_s16)next_iword_jit();
+		if ((dp & 0x30) == 0x30)
+			base += next_ilong_jit();
+		if ((dp & 0x3) == 0x2)
+			outer = (uae_s32)(uae_s16)next_iword_jit();
+		if ((dp & 0x3) == 0x3)
+			outer = next_ilong_jit();
+		if ((dp & 0x4) == 0)
+			base += regd;
+		if (dp & 0x3)
+			base = get_long_jit(base);
+		if (dp & 0x4)
+			base += regd;
+		return base + outer;
+	}
+	return base + (uae_s32)((uae_s8)dp) + regd;
+}
+
+uae_u32 jit040_get_lrmw_byte(uaecptr addr)
+{
+	if (unlikely(jit040_selftesting))
+		return *SELFTEST_MEM(addr);
+	return get_lrmw_byte_mmu040(addr);
+}
+uae_u32 jit040_get_lrmw_word(uaecptr addr)
+{
+	if (unlikely(jit040_selftesting))
+		return do_get_mem_word(SELFTEST_MEM(addr));
+	return get_lrmw_word_mmu040(addr);
+}
+uae_u32 jit040_get_lrmw_long(uaecptr addr)
+{
+	if (unlikely(jit040_selftesting))
+		return do_get_mem_long(SELFTEST_MEM(addr));
+	return get_lrmw_long_mmu040(addr);
+}
+void jit040_put_lrmw_byte(uaecptr addr, uae_u32 v)
+{
+	if (unlikely(jit040_selftesting))
+		*SELFTEST_MEM(addr) = v;
+	else
+		put_lrmw_byte_mmu040(addr, v);
+}
+void jit040_put_lrmw_word(uaecptr addr, uae_u32 v)
+{
+	if (unlikely(jit040_selftesting))
+		do_put_mem_word(SELFTEST_MEM(addr), v);
+	else
+		put_lrmw_word_mmu040(addr, v);
+}
+void jit040_put_lrmw_long(uaecptr addr, uae_u32 v)
+{
+	if (unlikely(jit040_selftesting))
+		do_put_mem_long(SELFTEST_MEM(addr), v);
+	else
+		put_lrmw_long_mmu040(addr, v);
+}
+
+void jit040_get_move16(uaecptr addr, uae_u32 *v)
+{
+	int i;
+
+	if (likely(!jit040_selftesting)) {
+		get_move16_mmu(addr, v);
+		return;
+	}
+	for (i = 0; i < 4; i++)
+		v[i] = do_get_mem_long(SELFTEST_MEM((addr & ~15) + i * 4));
+}
+void jit040_put_move16(uaecptr addr, uae_u32 *v)
+{
+	int i;
+
+	if (likely(!jit040_selftesting)) {
+		put_move16_mmu(addr, v);
+		return;
+	}
+	for (i = 0; i < 4; i++)
+		do_put_mem_long(SELFTEST_MEM((addr & ~15) + i * 4), v[i]);
+}
+
+/* a bit field in memory at host, as get_bitfield and put_bitfield do it */
+uae_u32 jit040_bf_get(uae_u8 *host, uae_u32 bdata[2], uae_s32 offset, int width)
+{
+	uae_u32 tmp, res, mask;
+
+	offset &= 7;
+	mask = 0xffffffffu << (32 - width);
+	switch ((offset + width + 7) >> 3) {
+	case 1:
+		tmp = host[0];
+		res = tmp << (24 + offset);
+		bdata[0] = tmp & ~(mask >> (24 + offset));
+		break;
+	case 2:
+		tmp = do_get_mem_word(host);
+		res = tmp << (16 + offset);
+		bdata[0] = tmp & ~(mask >> (16 + offset));
+		break;
+	case 3:
+		tmp = do_get_mem_word(host);
+		res = tmp << (16 + offset);
+		bdata[0] = tmp & ~(mask >> (16 + offset));
+		tmp = host[2];
+		res |= tmp << (8 + offset);
+		bdata[1] = tmp & ~(mask >> (8 + offset));
+		break;
+	case 4:
+		tmp = do_get_mem_long(host);
+		res = tmp << offset;
+		bdata[0] = tmp & ~(mask >> offset);
+		break;
+	default:
+		tmp = do_get_mem_long(host);
+		res = tmp << offset;
+		bdata[0] = tmp & ~(mask >> offset);
+		tmp = host[4];
+		res |= tmp >> (8 - offset);
+		bdata[1] = tmp & ~(mask << (8 - offset));
+		break;
+	}
+	return res;
+}
+void jit040_bf_put(uae_u8 *host, uae_u32 bdata[2], uae_u32 val, uae_s32 offset, int width)
+{
+	offset = (offset & 7) + width;
+	switch ((offset + 7) >> 3) {
+	case 1:
+		host[0] = bdata[0] | (val << (8 - offset));
+		break;
+	case 2:
+		do_put_mem_word(host, bdata[0] | (val << (16 - offset)));
+		break;
+	case 3:
+		do_put_mem_word(host, bdata[0] | (val >> (offset - 16)));
+		host[2] = bdata[1] | (val << (24 - offset));
+		break;
+	case 4:
+		do_put_mem_long(host, bdata[0] | (val << (32 - offset)));
+		break;
+	default:
+		do_put_mem_long(host, bdata[0] | (val >> (offset - 32)));
+		host[4] = bdata[1] | (val << (40 - offset));
+		break;
+	}
+}
+
+uae_u32 jit040_get_bitfield(uae_u32 src, uae_u32 bdata[2], uae_s32 offset, int width)
+{
+	if (unlikely(jit040_selftesting))
+		return jit040_bf_get(SELFTEST_MEM(src), bdata, offset, width);
+	return x_get_bitfield(src, bdata, offset, width);
+}
+void jit040_put_bitfield(uae_u32 dst, uae_u32 bdata[2], uae_u32 val, uae_s32 offset, int width)
+{
+	if (unlikely(jit040_selftesting))
+		jit040_bf_put(SELFTEST_MEM(dst), bdata, val, offset, width);
+	else
+		x_put_bitfield(dst, bdata, val, offset, width);
+}
+
 /* Dropping blocks */
 
 void jit040_flush(void)

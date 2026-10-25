@@ -32,7 +32,7 @@ struct jit040_block {
 	jit040_code code;                /* native code, once the block is used often */
 	uae_u8 *chain;                   /* in it, where other blocks' code goes on */
 	uae_u8 *chain_self;              /* and its own, its registers loaded */
-	uae_u8 *code_end;
+	signed char cached[4];           /* the guest register in each host register kept, or -1 */
 	uae_u16 runs;                    /* times run before it has native code */
 	int n;
 	struct jit040_ins ins[];
@@ -47,6 +47,10 @@ extern uae_u8 jit040_selftest_mem[4096 + 4];
 extern uae_u8 *jit040_selftest_data;
 extern uaecptr jit040_selftest_vdata;
 extern struct flag_struct jit040_f;  /* the flags before the current instruction */
+
+/* a bit field in memory at host, as get_bitfield and put_bitfield do it */
+extern uae_u32 jit040_bf_get(uae_u8 *host, uae_u32 bdata[2], uae_s32 offset, int width);
+extern void jit040_bf_put(uae_u8 *host, uae_u32 bdata[2], uae_u32 val, uae_s32 offset, int width);
 
 /* runs of a block before it is compiled to native code */
 #define JIT040_HOT 16
@@ -84,7 +88,8 @@ extern bool jit040_native_init(void);
 extern void jit040_native_flush(void);
 extern bool jit040_compile(struct jit040_block *b);
 extern uae_u8 *jit040_link_site;
-extern void jit040_link(struct jit040_block *from);
+extern struct jit040_block *jit040_link_from;
+extern void jit040_link(void);
 extern void jit040_selftest(void);
 extern void jit040_record_end(void);
 

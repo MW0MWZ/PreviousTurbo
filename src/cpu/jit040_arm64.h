@@ -9,7 +9,9 @@
   x19 holds &regs, x21 &regflags, x22 the page cache, x23 &jit040_stop and
   x24 this file's data; w20 counts the cycles. The virtual registers are w10
   (V0), w11 (V1), w12 (VA, addresses), w13 (VJ, jump targets) and w14 (VI,
-  indexes); x9, x15 (host addresses), x16 and x17 are the code's own.
+  indexes); x9, x15 (host addresses), x16 and x17 are the code's own. w25
+  to w28 hold the guest registers the block uses most (see cache_reg),
+  written through to regs as well.
 
   regflags.cznv here has the generic layout of machdep/m68k.h (N bit 7, Z 6,
   C 0, V 11). The host's flags are turned into it with a table, by NZCV;
@@ -39,10 +41,12 @@ enum { A_EQ = 0, A_NE, A_HS, A_LO, A_MI, A_PL, A_VS, A_VC, A_HI, A_LS, A_GE, A_L
 /* What the code reaches through x24 */
 static struct {
 	uae_u16 flags[32];          /* NZCV >> 28 to cznv: additions, subtractions (C inverted) */
+	uae_u32 ccr[16];            /* the 68k's N, Z, V and C (bits 3-0) to cznv */
 	void *regs, *regflags, *tlb, *stop;
 	uae_u8 *mmu_restart;
 	uae_u16 *mmu_opcode;
 	uae_u8 **link_site;
+	struct jit040_block **link_from;
 	struct flag_struct *f;
 } arm;
 
@@ -53,20 +57,24 @@ static struct {
 #define D_RESTART  offsetof(__typeof__(arm), mmu_restart)
 #define D_OPCODE   offsetof(__typeof__(arm), mmu_opcode)
 #define D_LINK     offsetof(__typeof__(arm), link_site)
+#define D_LINK_FROM offsetof(__typeof__(arm), link_from)
 #define D_F        offsetof(__typeof__(arm), f)
+#define D_CCR      offsetof(__typeof__(arm), ccr)
 
 /* Offsets of the fields, from regs and regflags */
 static uint32_t o_regs, o_pc, o_instruction_pc, o_opcode, o_spcflags, o_s;
-static uint32_t o_cznv, o_x, o_f_cznv, o_f_x;
+static uint32_t o_cznv, o_x, o_f_cznv, o_f_x, o_usp;
 
 static bool be_init(bool *mem_ok)
 {
 	int i;
 
 	if (sizeof(regflags.cznv) != 4 || sizeof(regflags.x) != 4 || sizeof(mmu_restart) != 1 ||
-	    sizeof(regs.s) != 1 || sizeof(regs.opcode) != 2 || sizeof(mmu_opcode) != 2)
+	    sizeof(regs.s) != 1 || sizeof(regs.opcode) != 2 || sizeof(mmu_opcode) != 2 ||
+	    sizeof(regs.usp) != 4)
 		return false;
 	o_regs = offsetof(struct regstruct, regs);
+	o_usp = offsetof(struct regstruct, usp);
 	o_pc = offsetof(struct regstruct, pc);
 	o_instruction_pc = offsetof(struct regstruct, instruction_pc);
 	o_opcode = offsetof(struct regstruct, opcode);
@@ -79,8 +87,13 @@ static bool be_init(bool *mem_ok)
 	/* reached with scaled 12 bit offsets */
 	if ((o_regs | o_pc | o_instruction_pc | o_spcflags | o_cznv | o_x) & 3 || (o_opcode & 1) ||
 	    o_regs + 64 > 16380 || o_pc > 16380 || o_instruction_pc > 16380 || o_spcflags > 16380 ||
-	    o_opcode > 8190 || o_s > 4095)
+	    o_opcode > 8190 || o_s > 4095 || (o_usp & 3) || o_usp > 16380 ||
+	    D_CCR > 16380)
 		return false;
+	for (i = 0; i < 16; i++) {
+		arm.ccr[i] = ((i & 8) ? HOST_F_N : 0) | ((i & 4) ? HOST_F_Z : 0) |
+			((i & 2) ? HOST_F_V : 0) | ((i & 1) ? HOST_F_C : 0);
+	}
 	for (i = 0; i < 16; i++) {
 		int n = i >> 3 & 1, z = i >> 2 & 1, c = i >> 1 & 1, v = i & 1;
 		uae_u16 nzv = (n ? HOST_F_N : 0) | (z ? HOST_F_Z : 0) | (v ? HOST_F_V : 0);
@@ -94,6 +107,7 @@ static bool be_init(bool *mem_ok)
 	arm.mmu_restart = (uae_u8 *)&mmu_restart;
 	arm.mmu_opcode = &mmu_opcode;
 	arm.link_site = &jit040_link_site;
+	arm.link_from = &jit040_link_from;
 	arm.f = &jit040_f;
 	*mem_ok = sizeof(struct pt_tlb_entry) == 32 &&
 		offsetof(struct pt_tlb_entry, jit_tag) == 20 && offsetof(struct pt_tlb_entry, jit_host) == 24;
@@ -279,23 +293,85 @@ static void str_sz(int sz, int rt, int rn, uae_u32 off)
 static void ldrx(int rt, int rn, uae_u32 off) { ins(0xf9400000 | ((off >> 3) << 10) | (rn << 5) | rt); }
 static void strx(int rt, int rn, uae_u32 off) { ins(0xf9000000 | ((off >> 3) << 10) | (rn << 5) | rt); }
 
+/* The host registers that may hold guest registers, and which guest
+ * register each holds (cache_reg[f], -1 for none): set by the front end
+ * for each block. They are loaded when the block is entered and after a
+ * handler is called, and every write to the guest register is made to both. */
+#define BE_CACHED 4
+static const int cache_host[BE_CACHED] = { 25, 26, 27, 28 };
+
+static int cached(int f)
+{
+	if (f >= 16)
+		return -1;
+	cache_uses[f]++;
+	return cache_reg[f];
+}
+
 /* the base and offset of a field */
 static void field(int f, int *base, uae_u32 *off)
 {
 	if (f < 16) {
 		*base = XB;
 		*off = o_regs + 4 * f;
-	} else if (f == F_PC) {
+	} else if (f == F_PC || f == F_USP) {
 		*base = XB;
-		*off = o_pc;
+		*off = f == F_PC ? o_pc : o_usp;
 	} else {
 		*base = XF;
 		*off = f == F_CZNV ? o_cznv : o_x;
 	}
 }
-static void ldf(int sz, int rt, int f) { int b; uae_u32 o; field(f, &b, &o); ldr_sz(sz, rt, b, o); }
-static void ldfs(int sz, int rt, int f) { int b; uae_u32 o; field(f, &b, &o); if (sz == 4) ldr_sz(4, rt, b, o); else ldrs_sz(sz, rt, b, o); }
-static void stf(int sz, int rt, int f) { int b; uae_u32 o; field(f, &b, &o); str_sz(sz, rt, b, o); }
+/* rt = f, zero extended from size sz */
+static void ldf(int sz, int rt, int f)
+{
+	int b, h = cached(f);
+	uae_u32 o;
+
+	if (h >= 0) {
+		if (sz == 4)
+			mov_rr(rt, h);
+		else
+			ubfx(rt, h, 0, sz * 8);
+		return;
+	}
+	field(f, &b, &o);
+	ldr_sz(sz, rt, b, o);
+}
+/* rt = f, sign extended from size sz */
+static void ldfs(int sz, int rt, int f)
+{
+	int b, h = cached(f);
+	uae_u32 o;
+
+	if (h >= 0) {
+		if (sz == 4)
+			mov_rr(rt, h);
+		else
+			sxt(sz, rt, h);
+		return;
+	}
+	field(f, &b, &o);
+	if (sz == 4)
+		ldr_sz(4, rt, b, o);
+	else
+		ldrs_sz(sz, rt, b, o);
+}
+/* f = rt, size sz (the rest of f kept) */
+static void stf(int sz, int rt, int f)
+{
+	int b, h = cached(f);
+	uae_u32 o;
+
+	if (h >= 0) {
+		if (sz == 4)
+			mov_rr(h, rt);
+		else
+			ins(0x33000000 | ((sz * 8 - 1) << 10) | (rt << 5) | h);   /* bfi h, rt, 0, sz * 8 */
+	}
+	field(f, &b, &o);
+	str_sz(sz, rt, b, o);
+}
 
 /* branches */
 static uae_u8 *b_cond(int cond) { ins(0x54000000 | cond); return cp - 4; }
@@ -361,11 +437,13 @@ static void test_sz(int sz, int r)
 
 static void be_prologue(struct jit040_block *b)
 {
-	ins(0xa9ba7bfd);                          /* stp x29, x30, [sp, #-96]! */
+	ins(0xa9b87bfd);                          /* stp x29, x30, [sp, #-128]! */
 	ins(0x910003fd);                          /* mov x29, sp */
 	ins(0xa90153f3);                          /* stp x19, x20, [sp, #16] */
 	ins(0xa9025bf5);                          /* stp x21, x22, [sp, #32] */
 	ins(0xa90363f7);                          /* stp x23, x24, [sp, #48] */
+	ins(0xa9046bf9);                          /* stp x25, x26, [sp, #64] */
+	ins(0xa90573fb);                          /* stp x27, x28, [sp, #80] */
 	movx(XD, (uintptr_t)&arm);
 	ldrx(XB, XD, D_REGS);
 	ldrx(XF, XD, D_REGFLAGS);
@@ -377,10 +455,12 @@ static void be_prologue(struct jit040_block *b)
 static void be_epilogue(void)
 {
 	mov_rr(0, XC);
+	ins(0xa94573fb);                          /* ldp x27, x28, [sp, #80] */
+	ins(0xa9446bf9);                          /* ldp x25, x26, [sp, #64] */
 	ins(0xa94363f7);                          /* ldp x23, x24, [sp, #48] */
 	ins(0xa9425bf5);                          /* ldp x21, x22, [sp, #32] */
 	ins(0xa94153f3);                          /* ldp x19, x20, [sp, #16] */
-	ins(0xa8c67bfd);                          /* ldp x29, x30, [sp], #96 */
+	ins(0xa8c87bfd);                          /* ldp x29, x30, [sp], #128 */
 	ins(0xd65f03c0);                          /* ret */
 }
 static void be_add_cycles(int n)
@@ -595,7 +675,8 @@ static void be_swap(int v)
 }
 
 /* Shifts and rotates by n (1-8, less than the size in bits) with the 68k's
- * flags: kind 0 AS, 1 LS, 3 RO; the result is stored too */
+ * flags: kind 0 AS, 1 LS, 3 RO; the result is stored in f too, unless f < 0
+ * (x15 is kept) */
 static void be_shift(int sz, int kind, int left, int v, int n, int f)
 {
 	int r = vreg[v], nbits = sz * 8;
@@ -613,7 +694,8 @@ static void be_shift(int sz, int kind, int left, int v, int n, int f)
 			SR(I_ORR, r, W16, W17, 0, 0);
 			ubfx(W17, r, nbits - 1, 1);
 		}
-		stf(sz, r, f);
+		if (f >= 0)
+			stf(sz, r, f);
 		test_sz(sz, r);
 		nzcv_to_w9(0);
 		SR(I_ORR, W9, W9, W17, 0, 0);
@@ -633,22 +715,23 @@ static void be_shift(int sz, int kind, int left, int v, int n, int f)
 		if (kind == 0) {
 			/* ASL: V if the bits shifted through the sign bit differ */
 			if (sz == 4)
-				mov_rr(W15, r);
+				mov_rr(13, r);
 			else
-				sxt(sz, W15, r);
-			asri(W15, W15, nbits - 1 - n);
-			addi(W15, W15, 1);
-			cmpi(W15, 1);
-			cset(W15, A_HI);
+				sxt(sz, 13, r);
+			asri(13, 13, nbits - 1 - n);
+			addi(13, 13, 1);
+			cmpi(13, 1);
+			cset(13, A_HI);
 		}
 		lsli(r, r, n);
 	}
-	stf(sz, r, f);
+	if (f >= 0)
+		stf(sz, r, f);
 	test_sz(sz, r);
 	nzcv_to_w9(0);
 	SR(I_ORR, W9, W9, W17, 0, 0);
 	if (left && kind == 0)
-		SR(I_ORR, W9, W9, W15, 0, 11);
+		SR(I_ORR, W9, W9, 13, 0, 11);
 	str_sz(4, W9, XF, o_cznv);
 	str_sz(4, W9, XF, o_x);
 }
@@ -672,8 +755,12 @@ static void be_shift_reg(int sz, int kind, int left, int fc, int fv)
 	int n = sz * 8, c = vreg[VA], r = vreg[V0];
 	uae_u8 *shift, *done;
 
-	ldf(4, c, fc);
-	andi(c, c, 63);
+	if (fc >= 0) {
+		ldf(4, c, fc);
+		andi(c, c, 63);
+	} else {
+		movw(c, -1 - fc);                     /* a count of -1 - fc */
+	}
 	if (kind == 0 && !left)
 		ldfs(sz, r, fv);
 	else
@@ -718,13 +805,15 @@ static void be_shift_reg(int sz, int kind, int left, int fc, int fv)
 }
 
 /* ROXL, ROXR of Dn by n (1-8): X above the value, rotated as size + 1 bits;
- * C and X are then the bit above the result, V is cleared */
+ * C and X are then the bit above the result, V is cleared. For f < 0 the
+ * value is in V0, zero extended, and the result is left there (x15 kept). */
 static void orr64(int rd, int rn, int rm) { ins(0xaa000000 | (rm << 16) | (rn << 5) | rd); }
 static void be_rox(int sz, int left, int n, int f)
 {
 	int nbits = sz * 8, r = vreg[V0];
 
-	ldf(sz, r, f);
+	if (f >= 0)
+		ldf(sz, r, f);
 	ldr_sz(4, W9, XF, o_x);
 	andi(W9, W9, 1);
 	lsl64i(W9, W9, nbits);
@@ -739,7 +828,8 @@ static void be_rox(int sz, int left, int n, int f)
 	orr64(r, W16, W17);
 	lsr64i(W17, r, nbits);
 	andi(W17, W17, 1);                        /* C (test_sz uses w16) */
-	stf(sz, r, f);
+	if (f >= 0)
+		stf(sz, r, f);
 	test_sz(sz, r);
 	nzcv_to_w9(0);
 	SR(I_ORR, W9, W9, W17, 0, 0);
@@ -843,10 +933,16 @@ static uae_u8 *be_jcc68(int cc, int when_true)
 	return b_cond(when_true ? holds : holds ^ 1);
 }
 
-/* No guest registers are kept in host registers here yet */
-#define BE_CACHED 0
-static const int cache_host[1] = { 0 };
-static void be_cache_load(void) { }
+/* The cached guest registers from regs */
+static void be_cache_load(void)
+{
+	int f;
+
+	for (f = 0; f < 16; f++) {
+		if (cache_reg[f] >= 0)
+			ldr_sz(4, cache_reg[f], XB, o_regs + 4 * f);
+	}
+}
 
 /* Dn.w -= 1; jumps if it was 0 */
 static uae_u8 *be_dbcc_dec(int f)
@@ -893,6 +989,9 @@ static void be_exit_linkable(struct ctx *c, uaecptr target)
 	ins(0x10000000 | ((d & 3) << 29) | (((d >> 2) & 0x7ffff) << 5) | W9);   /* adr x9, site */
 	ldrx(W16, XD, D_LINK);
 	strx(W9, W16, 0);
+	movx(W9, (uintptr_t)c->b);
+	ldrx(W16, XD, D_LINK_FROM);
+	strx(W9, W16, 0);
 	patch(busy, cp);
 	patch(spent, cp);
 	be_store_pc(target);
@@ -928,6 +1027,7 @@ static void be_call(struct ctx *c, struct jit040_ins *in, uaecptr pc, bool last)
 	SR(I_ADD, XC, XC, 0, 0, 0);               /* add w20, w20, w0 */
 	if (last)
 		return;
+	be_cache_load();                          /* the handler may have changed them */
 	be_exit_if_attention(c);
 	ldr_sz(4, W9, XB, o_pc);
 	movw(W16, pc + in->len);
@@ -963,6 +1063,7 @@ static void be_rejoin(struct stub *st)
 
 	if (st->cycles)
 		addi_any(XC, XC, -st->cycles);
+	be_cache_load();
 	for (v = 0; v < 5; v++) {
 		if (st->f[v] >= 0)
 			ldf(4, vreg[v], st->f[v]);
@@ -1033,21 +1134,35 @@ static void be_host_store(int sz, int v)
 	rc_end();
 }
 
-/* the same at [x15 + off], off a multiple of the size */
+/* the same at [x15 + off], 0 <= off < 256 */
+static void ldur_sz(int sz, int rt, int rn, int off)   /* ldurb, ldurh, ldur */
+{
+	ins((sz == 1 ? 0x38400000 : sz == 2 ? 0x78400000 : 0xb8400000) | ((off & 0x1ff) << 12) | (rn << 5) | rt);
+}
+static void stur_sz(int sz, int rt, int rn, int off)
+{
+	ins((sz == 1 ? 0x38000000 : sz == 2 ? 0x78000000 : 0xb8000000) | ((off & 0x1ff) << 12) | (rn << 5) | rt);
+}
 static void be_host_load_off(int sz, int v, int off)
 {
 	int r = vreg[v];
 
 	rc_begin();
-	ldr_sz(sz, r, W15, off);
-	ins((sz == 2 ? 0x5ac00400 : 0x5ac00800) | (r << 5) | r);   /* rev16, rev */
+	ldur_sz(sz, r, W15, off);
+	if (sz != 1)
+		ins((sz == 2 ? 0x5ac00400 : 0x5ac00800) | (r << 5) | r);   /* rev16, rev */
 	rc_set(v);
 }
 static void be_host_store_off(int sz, int v, int off)
 {
+	int r = vreg[v];
+
 	rc_begin();
-	ins((sz == 2 ? 0x5ac00400 : 0x5ac00800) | (vreg[v] << 5) | W9);
-	str_sz(sz, W9, W15, off);
+	if (sz != 1) {
+		ins((sz == 2 ? 0x5ac00400 : 0x5ac00800) | (r << 5) | W9);
+		r = W9;
+	}
+	stur_sz(sz, r, W15, off);
 	rc_end();
 }
 
@@ -1057,4 +1172,190 @@ static void be_slow_if_odd(struct ctx *c, int v)
 	rc_begin();
 	slow_add(c, force_slow ? b_() : tbnz(vreg[v], 0));
 	rc_end();
+}
+
+/* More operations */
+
+static void lslv(int rd, int rn, int rm) { ins(0x1ac02000 | (rm << 16) | (rn << 5) | rd); }
+static void lsrv(int rd, int rn, int rm) { ins(0x1ac02400 | (rm << 16) | (rn << 5) | rd); }
+
+static void be_shri(int v, int n) { rc_begin(); lsri(vreg[v], vreg[v], n); rc_set(v); }
+static void be_sari(int v, int n) { rc_begin(); asri(vreg[v], vreg[v], n); rc_set(v); }
+
+/* Jumps, bound with be_bind */
+static uae_u8 *be_jmp(void) { return b_(); }
+static uae_u8 *be_jz(int v) { return cbz(vreg[v]); }
+static uae_u8 *be_jnz(int v) { return cbnz(vreg[v]); }
+static uae_u8 *be_jeq_imm(int v, uae_u32 x) { movw(W16, x); cmp_rr(vreg[v], W16); return b_cond(A_EQ); }
+
+/* bit (s & mask) of v changed (op 1), cleared (2) or set (3), as BCHG, BCLR
+ * and BSET (the flags are be_btst_v's) */
+static void be_bitop(int op, int v, int s, int mask)
+{
+	int r = vreg[v];
+
+	rc_begin();
+	andi(W17, vreg[s], mask);
+	movz(W16, 1, 0);
+	lslv(W16, W16, W17);
+	if (op == 1)
+		SR(I_EOR, r, r, W16, 0, 0);
+	else if (op == 2)
+		ins(0x0a200000 | (W16 << 16) | (r << 5) | r);   /* bic */
+	else
+		SR(I_ORR, r, r, W16, 0, 0);
+	rc_set(v);
+}
+
+/* v = v + s + X, or v - s - X (sub), on sz bytes: C, V and N as the
+ * operation sets them, Z cleared if the result is not 0 and kept if it is,
+ * X = C (ADDX, SUBX, NEGX; x15 kept). Bytes and words are done in the top
+ * bits; for an addition the bits below the value are ones in s, so that a
+ * carry in reaches the value, and for a subtraction zeros, so that a
+ * borrow in does. */
+static void be_addx(int sz, int sub, int v, int s)
+{
+	int r = vreg[v], b = vreg[s], sh = 32 - 8 * sz;
+	uae_u32 op = sub ? 0x7a000000 : 0x3a000000;    /* sbcs, adcs */
+
+	rc_begin();
+	ldr_sz(4, W9, XF, o_x);
+	andi(W9, W9, 1);
+	if (sub)
+		eori(W9, W9, 1);                         /* sbcs takes off !C */
+	lsli(W9, W9, 29);
+	ins(0xd51b4200 | W9);                        /* msr nzcv, x9 */
+	if (sz == 4) {
+		ins(op | (b << 16) | (r << 5) | W16);
+	} else {
+		lsli(W16, r, sh);
+		lsli(W17, b, sh);
+		if (!sub)
+			orri(W17, W17, (1u << sh) - 1);
+		ins(op | (W17 << 16) | (W16 << 5) | W16);
+	}
+	nzcv_to_w9(sub);                             /* N, C and V */
+	if (sz == 4)
+		mov_rr(r, W16);
+	else
+		lsri(r, W16, sh);
+	ldr_sz(4, W17, XF, o_cznv);
+	andi(W17, W17, HOST_F_Z);
+	andi(W9, W9, ~(uae_u32)HOST_F_Z);
+	test_sz(sz, r);
+	ins(0x1a800000 | (WZR << 16) | (A_EQ << 12) | (W17 << 5) | W17);   /* csel w17, w17, wzr, eq */
+	SR(I_ORR, W9, W9, W17, 0, 0);
+	str_sz(4, W9, XF, o_cznv);
+	str_sz(4, W9, XF, o_x);
+	rc_set(v);
+}
+
+/* The handler, if a and b (0 for b < 0) compare as cond, as values of sz
+ * bytes (also after a helper that did the work: the self-test does not force
+ * this one) */
+enum { SC_LT, SC_GT, SC_ULT, SC_UGT, SC_EQ, SC_NE };
+static void be_slow_cmp(struct ctx *c, int sz, int cond, int a, int b)
+{
+	static const int cc[] = { A_LT, A_GT, A_LO, A_HI, A_EQ, A_NE };
+	int ra = vreg[a], rb = b < 0 ? WZR : vreg[b];
+
+	rc_begin();
+	if (sz != 4) {
+		if (cond == SC_LT || cond == SC_GT) {
+			sxt(sz, W16, ra);
+			if (b >= 0)
+				sxt(sz, W17, rb);
+		} else {
+			ubfx(W16, ra, 0, sz * 8);
+			if (b >= 0)
+				ubfx(W17, rb, 0, sz * 8);
+		}
+		ra = W16;
+		if (b >= 0)
+			rb = W17;
+	}
+	cmp_rr(ra, rb);
+	slow_add(c, b_cond(cc[cond]));
+	rc_end();
+}
+
+/* The 68k's CCR from the low 5 bits of v: regflags, X too (x15 kept) */
+static void be_ccr_set(int v)
+{
+	rc_begin();
+	andi(W9, vreg[v], 15);
+	ins(0x8b000000 | (W9 << 16) | (2 << 10) | (XD << 5) | W16);   /* add x16, x24, x9, lsl #2 */
+	ldr_sz(4, W16, W16, D_CCR);
+	str_sz(4, W16, XF, o_cznv);
+	ubfx(W9, vreg[v], 4, 1);
+	str_sz(4, W9, XF, o_x);
+	rc_end();
+}
+
+/* the host address for be_ccall: p */
+static void be_set_host(const void *p) { movx(W15, (uintptr_t)p); }
+
+/* A call to fn(V0, V1, VJ, the host address), its result in V0: the other
+ * virtual registers are lost, the host address is kept. regs_written: it
+ * may change the guest's registers. */
+static void be_ccall(jit040_helper fn, bool regs_written)
+{
+	strx(W15, 31, 96);                        /* str x15, [sp, #96] */
+	mov_rr(0, vreg[V0]);
+	mov_rr(1, vreg[V1]);
+	mov_rr(2, vreg[VJ]);
+	ins(0xaa0003e0 | (W15 << 16) | 3);        /* mov x3, x15 */
+	movx(W9, (uintptr_t)fn);
+	ins(0xd63f0000 | (W9 << 5));              /* blr x9 */
+	mov_rr(vreg[V0], 0);
+	ldrx(W15, 31, 96);
+	if (regs_written)
+		be_cache_load();
+	cznv_in_w9 = NULL;
+}
+
+/* ROL, ROR of Dy by the count in Dx (mod 64), or by -1 - fc for fc < 0: C is
+ * the last bit rotated (cleared for a count of 0), X is kept, V cleared */
+static void be_rot_reg(int sz, int left, int fc, int fv)
+{
+	int n = sz * 8, c = vreg[VA], r = vreg[V0];
+	uae_u8 *zero;
+
+	if (fc >= 0) {
+		ldf(4, c, fc);
+		andi(c, c, 63);
+	} else {
+		movw(c, -1 - fc);
+	}
+	ldf(sz, r, fv);
+	movz(W17, 0, 0);                          /* C */
+	zero = cbz(c);
+	andi(W9, c, n - 1);
+	if (sz == 4) {
+		if (left)
+			SR(I_SUB, W9, WZR, W9, 0, 0);     /* rotated left by k: right by 32 - k */
+		ins(0x1ac02c00 | (W9 << 16) | (r << 5) | r);   /* rorv */
+	} else {
+		movw(W16, n);
+		SR(I_SUB, W16, W16, W9, 0, 0);
+		if (left) {
+			lslv(13, r, W9);
+			lsrv(W16, r, W16);
+		} else {
+			lsrv(13, r, W9);
+			lslv(W16, r, W16);
+		}
+		SR(I_ORR, r, 13, W16, 0, 0);
+		andi(r, r, (1u << n) - 1);
+	}
+	if (left)
+		andi(W17, r, 1);
+	else
+		ubfx(W17, r, n - 1, 1);
+	stf(sz, r, fv);
+	patch(zero, cp);
+	test_sz(sz, r);
+	nzcv_to_w9(0);
+	SR(I_ORR, W9, W9, W17, 0, 0);
+	str_sz(4, W9, XF, o_cznv);
 }

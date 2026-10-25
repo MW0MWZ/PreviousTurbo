@@ -22,22 +22,34 @@ around it and, with Turbo on, the speed.
 
 - **Turbo.** The Turbo button in the status bar (also Machine > Turbo and
   Settings > Machine) runs the CPU as fast as the host can go, with fast
-  disk transfers, while the machine's clocks keep to real time, as in
-  SiliconGhost: the guest's time passes as the host's does, so its clock
-  stays right. It can be switched while the machine runs.
+  disk transfers, while the machine's timers keep to real time, as in
+  SiliconGhost; the guest's clock is put right after the fast waits
+  described below. It can be switched while the machine runs.
 - **JIT.** With Turbo, the 68040's code is compiled for the host's processor
   as it runs, on x86-64 (Linux, macOS, Windows) and AArch64 (macOS, Linux),
-  with the MMU, faults and self-modifying code handled as before; anything it
-  does not compile runs as in the interpreter. Blocks that follow each other
-  are linked, condition flags are worked out only where they are needed, and
-  on x86-64 the 68040 registers a block uses most are kept in the host's
+  with the MMU, faults and self-modifying code handled as before. Every
+  integer instruction and addressing mode is compiled, and so is all that
+  the 68040's FPU does itself (FMOVE, FADD, FSUB, FMUL, FDIV, FSQRT, FABS,
+  FNEG, FCMP, FTST, FMOVEM, the control registers, branches and conditional
+  sets), with the same arithmetic as the interpreter, so the results are
+  the same to the bit. The functions the 68040 leaves to software (FSIN,
+  FLOG and the like) trap to it as on a real 68040, and the instructions that
+  change the machine's state (MOVE to SR, MOVEC, MOVES, RTE, TRAP, the
+  cache and MMU instructions) run as in the interpreter. Blocks that follow
+  each other are linked, condition flags are worked out only where they are
+  needed, and the 68040 registers a block uses most are kept in the host's
   registers. It can be switched off in Settings > Machine, next to Turbo.
 - **MMU page cache.** With Turbo, a cache of translated pages sits in front
   of the 68040 MMU, and plain RAM and ROM are read and written directly.
 - **Fast start-up.** Waits on the microsecond counter, which the ROM and the
-  kernel's DELAY use, are short: when the guest reads it again straight away,
-  it moves on faster, while the system timer that keeps the time of day
-  stays on real time, so OPENSTEP 4.2 starts in a few seconds. From the
+  kernel's DELAY use, are short: when the same instruction reads it again
+  straight away, it moves on faster, so OPENSTEP 4.2 starts in a few
+  seconds. The kernel keeps its time of day by that counter as well, so its
+  clock gains in these waits (about eight seconds while OPENSTEP 4.2
+  starts, a few more in long disk work). Once the desktop has started, the
+  counter runs at half speed where nothing waits on it while the clock is
+  ahead, so the clock is right again after about twice as long as it
+  gained (a clock that is behind is brought forward the same way). From the
   WindowServer starting to Workspace starting (15 seconds at most), time is
   counted at the real CPU's speed, as with Turbo and Variable off: at that
   point OPENSTEP 4.2 has a race that, run fast on a busy host, could leave
@@ -101,10 +113,7 @@ around it and, with Turbo on, the speed.
 
 ## Plans
 
-- **CPU.** More of the 68040's instructions compiled by the JIT, registers
-  kept in the host's registers across linked blocks and on AArch64, and a
-  faster FPU path.
-- **NeXTdimension.** A much faster i860.
+- **CPU.** Further speed-ups of the JIT.
 - **Sound.** Steadier audio at high speeds.
 
 Anything that departs from the behaviour of real hardware for the sake of speed

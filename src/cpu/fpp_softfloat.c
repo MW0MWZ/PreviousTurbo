@@ -47,6 +47,7 @@
 #define FPCR_PRECISION_EXTENDED	0x00000000
 
 static struct float_status fs;
+struct float_status *fpp_jit_fs = &fs;   /* for the 68040 JIT's FPU instructions (fpp.c) */
 
 /* Functions for setting host/library modes and getting status */
 static void fp_set_mode(uae_u32 mode_control)

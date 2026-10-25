@@ -693,22 +693,102 @@ void HardclockReadCSR(void) {
 
 static uint64_t eventcounter_offset;
 
-/* Turbo: when the counter is read again straight away, the guest is waiting
- * on it (DELAY, the ROM's waits), and it moves on faster, a little at each
- * read: the waits are short, while the system timer, which keeps the time
- * of day, stays on real time. */
-static uint64_t eventcounter_boost;
-static uint64_t eventcounter_last;
-#define EVENTCOUNTER_SPIN  4000   /* cycles since the last read */
-#define EVENTCOUNTER_STEP  500    /* microseconds added */
+/* Turbo: when the same instruction reads the counter again straight away,
+ * the guest is waiting on it (DELAY, the ROM's waits), and it moves on
+ * faster, a little at each read: the waits are short. The guest's kernel
+ * keeps its time of day by the counter, from the real-time clock read as it
+ * starts, so its clock runs as far ahead of real time as the counter does,
+ * less what it misses of the counter's turns between its looks at the time
+ * (the reads that are not part of a wait: not repeated, nor followed by
+ * another straight away). Once the guest has started (after the ROM last
+ * read the counter), while its clock is out, the counter runs at half or
+ * one and a half times the speed for those reads, until it is right. */
+static uint64_t eventcounter_boost;   /* microseconds the counter is ahead of the time counted */
+static uint64_t eventcounter_clock;   /* how far ahead of real time it was when the guest read or
+                                         set the real-time clock, and the turns missed since */
+static uint64_t eventcounter_last;    /* cycles at the last read */
+static uaecptr  eventcounter_pc;      /* the instruction of the last read */
+static bool     eventcounter_waiting;
+static uint64_t eventcounter_seen;    /* the time counted at the last read */
+static uint64_t eventcounter_sample;  /* the counter at the guest's last look at the time */
+static uint64_t eventcounter_value;   /* and what the guest made of it */
+static uint64_t eventcounter_ext;     /* the guest's count of half turns, times 2^19 */
+static uint64_t eventcounter_next;    /* the counter at the read before, if it may be one, or 0 */
+static uint64_t eventcounter_next_at;
+static int      eventcounter_fix;     /* bringing the guest's clock back (-1) or on (1) */
+static unsigned eventcounter_boot;    /* Timing_StartUps() when the ROM last read it */
+#define EVENTCOUNTER_LOOP  200      /* cycles since the same instruction read it */
+#define EVENTCOUNTER_STEP  500      /* microseconds added */
+#define EVENTCOUNTER_OUT   200000   /* microseconds out before the clock is put right */
+
+static bool eventcounter_started(void) {
+    return Timing_StartUps() != eventcounter_boot;
+}
+
+/* how far the guest's clock is ahead of real time */
+static int64_t eventcounter_ahead(uint64_t now) {
+    return (int64_t)(now + eventcounter_boost - Timing_GetRealTimeUs() - eventcounter_clock);
+}
+
+/* The guest reads (as it starts) or sets the real-time clock */
+void System_Timer_ClockSet(bool set) {
+    if (set || !eventcounter_started()) {
+        eventcounter_clock = Timing_GetTime() + eventcounter_boost - Timing_GetRealTimeUs();
+        eventcounter_fix = 0;
+    }
+}
 
 void System_Timer_Read(void) {
-    if (ConfigureParams.System.bFullSpeed && (IoAccessCurrentAddress & 3) == 0) {
-        if (nCyclesMainCounter - eventcounter_last < EVENTCOUNTER_SPIN)
-            eventcounter_boost += EVENTCOUNTER_STEP;
-        eventcounter_last = nCyclesMainCounter;
+    uint64_t now = Timing_GetTime();
+
+    if (ConfigureParams.System.bFullSpeed) {
+        if ((IoAccessCurrentAddress & 3) == 0) {
+            eventcounter_waiting = regs.instruction_pc == eventcounter_pc &&
+                                   nCyclesMainCounter - eventcounter_last < EVENTCOUNTER_LOOP;
+            if (eventcounter_waiting)
+                eventcounter_boost += EVENTCOUNTER_STEP;
+            eventcounter_pc = regs.instruction_pc;
+            eventcounter_last = nCyclesMainCounter;
+            if (regs.s && eventcounter_pc >= 0x01000000 && eventcounter_pc < 0x02000000)
+                eventcounter_boot = Timing_StartUps();   /* the ROM: starting */
+
+            /* the read before was a look at the time, unless a wait began
+             * with it: what the guest made of it, as its kernel extends the
+             * counter (adding half a turn whenever bit 19 has changed) */
+            if (eventcounter_next && nCyclesMainCounter - eventcounter_next_at >= EVENTCOUNTER_LOOP) {
+                uint64_t value = eventcounter_next & 0xFFFFF;
+                if ((eventcounter_ext ^ value) & 0x80000)
+                    eventcounter_ext += 0x80000;
+                value |= eventcounter_ext;
+                if (eventcounter_sample)
+                    eventcounter_clock += (eventcounter_next - eventcounter_sample) - (value - eventcounter_value);
+                eventcounter_sample = eventcounter_next;
+                eventcounter_value = value;
+            }
+        }
+        if (now > eventcounter_seen) {
+            int64_t ahead = eventcounter_ahead(now);
+            if (!eventcounter_fix) {
+                if (eventcounter_started() && (ahead > EVENTCOUNTER_OUT || ahead < -EVENTCOUNTER_OUT))
+                    eventcounter_fix = ahead > 0 ? -1 : 1;
+            } else if (eventcounter_fix * ahead >= 0) {
+                eventcounter_fix = 0;                    /* right again */
+            }
+            if (eventcounter_fix && !eventcounter_waiting) {
+                uint64_t step = (now - eventcounter_seen) / 2;
+                uint64_t out = ahead > 0 ? (uint64_t)ahead : (uint64_t)-ahead;
+                if (step > out)
+                    step = out;
+                eventcounter_boost += eventcounter_fix > 0 ? step : -step;
+            }
+            eventcounter_seen = now;
+        }
+        if ((IoAccessCurrentAddress & 3) == 0) {
+            eventcounter_next = eventcounter_waiting ? 0 : now + eventcounter_boost - eventcounter_offset;
+            eventcounter_next_at = nCyclesMainCounter;
+        }
     }
-    IoMem_WriteLong(IoAccessCurrentAddress, (Timing_GetTime() + eventcounter_boost - eventcounter_offset) & 0xFFFFF);
+    IoMem_WriteLong(IoAccessCurrentAddress, (now + eventcounter_boost - eventcounter_offset) & 0xFFFFF);
 }
 
 void System_Timer_Write(void) {

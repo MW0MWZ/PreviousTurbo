@@ -24,6 +24,13 @@ extern void fp_init_softfloat(int);
 extern void fpsr_set_exception(uae_u32 exception);
 extern void fpu_modechange(void);
 extern void fpu_clearstatus(void);
+extern int fpp_jit_cond(int condition);
+extern uae_u32 fpp_jit_arith(uae_u32 opextra, uae_u32 pc, uae_u32 unused, uae_u8 *host);
+extern uae_u32 fpp_jit_fmove_out(uae_u32 opextra, uae_u32 pc, uae_u32 unused, uae_u8 *host);
+extern uae_u32 fpp_jit_fmovem(uae_u32 opextra, uae_u32 count, uae_u32 unused, uae_u8 *host);
+extern uae_u32 fpp_jit_fmove_cr(uae_u32 opextra, uae_u32 unused1, uae_u32 unused2, uae_u8 *host);
+extern void fpp_jit_get_state(uae_u32 *w);
+extern void fpp_jit_set_state(const uae_u32 *w);
 
 #ifdef WINUAE_FOR_HATARI
 extern double softfloat_tan(double v);

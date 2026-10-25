@@ -231,7 +231,10 @@ static void oldrtc_check_time(void) {
 /* Read and write RTC registers */
 static uint8_t oldrtc_get_clock(uint8_t addr) {
     uint8_t val = 0x00;
-        
+    
+    if ((rtc_addr&RTC_ADDR_MASK) >= 0x20 && (rtc_addr&RTC_ADDR_MASK) <= 0x26) {
+        System_Timer_ClockSet(false); /* the guest's clock is read from here */
+    }
     switch (rtc_addr&RTC_ADDR_MASK) {
         case 0x20: /* seconds */
             val = rtc.time.sec; break;
@@ -265,6 +268,9 @@ static uint8_t oldrtc_get_clock(uint8_t addr) {
 static void oldrtc_put_clock(uint8_t addr, uint8_t val) {
     uint8_t changed = val;
     
+    if ((addr&RTC_ADDR_MASK) >= 0x20 && (addr&RTC_ADDR_MASK) <= 0x26) {
+        System_Timer_ClockSet(true); /* and set */
+    }
     switch (addr&RTC_ADDR_MASK) {
         case 0x20: /* seconds */
             rtc.time.sec = val;
@@ -533,7 +539,10 @@ static void newrtc_check_interrupt(void) {
 /* Read and write RTC */
 static uint8_t newrtc_get_clock(uint8_t addr) {
     uint8_t val = 0x00;
-        
+    
+    if ((rtc_addr&RTC_ADDR_MASK) >= 0x20 && (rtc_addr&RTC_ADDR_MASK) <= 0x23) {
+        System_Timer_ClockSet(false); /* the guest's clock is read from here */
+    }
     switch (rtc_addr&RTC_ADDR_MASK) {
         case 0x20:
             val = (newrtc.timecntr>>24);
@@ -578,6 +587,9 @@ static uint8_t newrtc_get_clock(uint8_t addr) {
 static void newrtc_put_clock(uint8_t addr, uint8_t val) {
     uint8_t changed = val;
     
+    if ((rtc_addr&RTC_ADDR_MASK) >= 0x20 && (rtc_addr&RTC_ADDR_MASK) <= 0x23) {
+        System_Timer_ClockSet(true); /* and set */
+    }
     switch (rtc_addr&RTC_ADDR_MASK) {
         case 0x20:
             newrtc.timecntr &= 0x00FFFFFF;

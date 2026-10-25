@@ -6495,7 +6495,7 @@ static int m68k_run_jit040 (void)
 				jit040_stop = 0;
 				jit040_cycles += b->code ();
 				if (jit040_link_site)
-					jit040_link (b);
+					jit040_link ();
 			} else if (b) {
 				struct jit040_ins *in = b->ins;
 				int i = 0;

@@ -119,6 +119,7 @@ extern void HardclockWriteCSR(void);
 extern void HardclockReadCSR(void);
 
 extern void System_Timer_Read(void);
+extern void System_Timer_ClockSet(bool set);
 extern void System_Timer_Write(void);
 
 extern void ColorVideo_CMD_Write(void);

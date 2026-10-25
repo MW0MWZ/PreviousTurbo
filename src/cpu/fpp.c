@@ -2185,6 +2185,21 @@ static void maybe_idle_state (void)
 		regs.fpu_state = 1;
 }
 
+/* The condition of FBcc, FDBcc, FScc and FTRAPcc for the 68040 JIT
+ * (jit040_native.c), as their handlers work it out: 1 or 0, or -1 when the
+ * handler is needed (an exception is pending or may be taken, no FPU) */
+int fpp_jit_cond(int condition)
+{
+	condition &= 0x1f;
+	if (regs.fp_exp_pend || regs.fp_unimp_pend || if_no_fpu() || currprefs.cpu_model == 68060)
+		return -1;
+	if ((condition & 0x10) && (regs.fpsr & FPSR_CC_NAN))
+		return -1;
+	regs.fp_exception = false;
+	maybe_idle_state();
+	return condition_table[((regs.fpsr >> 24) & 15) * 32 + condition];
+}
+
 static void trace_t0_68040(void)
 {
 	if (regs.t0 && currprefs.cpu_model == 68040)
@@ -3599,6 +3614,387 @@ void fpuop_arithmetic (uae_u32 opcode, uae_u16 extra)
 	if (fpu_mmu_fixup) {
 		mmufixup[0].reg = -1;
 	}
+}
+
+/* For the 68040 JIT (jit040_native.c): the instructions the 68040's FPU does
+ * itself, done as their handlers do them, with the instruction decoded when
+ * it was compiled and its operand at host (its bytes in the 68k's order; Dn
+ * is read from regs). They return 1, having changed nothing, when the
+ * handler must do the instruction: an exception would be taken or is
+ * pending, an operand the 68040 does not take (a denormal), no FPU. */
+
+static void jit_tables(void);
+
+static bool jit_ready(void)
+{
+	static bool tables;
+
+	if (!tables) {
+		jit_tables();
+		tables = true;
+	}
+	return !regs.fp_exp_pend && !regs.fp_unimp_pend && !if_no_fpu() &&
+		currprefs.cpu_model == 68040 && currprefs.fpu_model == 68040 && currprefs.fpu_no_unimplemented;
+}
+
+/* The FPU here is always softfloat's (fp_init_softfloat): these are its
+ * fp_is_* and status functions and fpsr_clear_status, fpsr_make_status and
+ * fpsr_set_result as they are with it, without the calls through pointers */
+extern struct float_status *fpp_jit_fs;
+
+/* normalize_or_fault_if_no_denormal_support on the 68040: true for the fault */
+static bool jit_denormal(fpdata *f)
+{
+	if (!support_denormals)
+		return false;
+	if (floatx80_is_unnormal(f->fpx) || floatx80_is_denormal(f->fpx)) {
+		if (!floatx80_is_zero(f->fpx))
+			return true;
+		fpp_normalize(f);
+	}
+	return false;
+}
+
+static void jit_clear_status(void)
+{
+	regs.fpsr &= 0x0fff00f8;
+	fpp_jit_fs->float_exception_flags = 0;
+}
+
+/* fpsr_make_status: softfloat's flags into the exception byte, and the
+ * accrued byte from that (the exception byte was cleared at the start of
+ * the instruction, so both are a function of what is in it) */
+static uae_u32 jit_flag_bits[256];
+static uae_u32 jit_accrued_bits[256];
+
+static void jit_tables(void)
+{
+	int i;
+
+	for (i = 0; i < 256; i++) {
+		uae_u32 e = 0, a = 0, x = (uae_u32)i << 8;
+		if (i & float_flag_signaling)
+			e |= FPSR_SNAN;
+		if (i & float_flag_invalid)
+			e |= FPSR_OPERR;
+		if (i & float_flag_divbyzero)
+			e |= FPSR_DZ;
+		if (i & float_flag_overflow)
+			e |= FPSR_OVFL;
+		if (i & float_flag_underflow)
+			e |= FPSR_UNFL;
+		if (i & float_flag_inexact)
+			e |= FPSR_INEX2;
+		if (i & float_flag_decimal)
+			e |= FPSR_INEX1;
+		jit_flag_bits[i] = e;
+		if (x & FPSR_OVFL)
+			a |= FPSR_AE_OVFL;
+		if (x & (FPSR_OVFL | FPSR_INEX2 | FPSR_INEX1))
+			a |= FPSR_AE_INEX;
+		if (x & (FPSR_BSUN | FPSR_SNAN | FPSR_OPERR))
+			a |= FPSR_AE_IOP;
+		if ((x & FPSR_UNFL) && (x & FPSR_INEX2))
+			a |= FPSR_AE_UNFL;
+		if (x & FPSR_DZ)
+			a |= FPSR_AE_DZ;
+		jit_accrued_bits[i] = a;
+	}
+}
+
+static void jit_make_status(void)
+{
+	uae_u32 fpsr = regs.fpsr | jit_flag_bits[fpp_jit_fs->float_exception_flags];
+
+	regs.fpsr = fpsr | jit_accrued_bits[(fpsr >> 8) & 0xff];
+}
+
+static void jit_set_result(fpdata *result)
+{
+	regs.fpsr &= 0x00fffff8;
+	if (floatx80_is_negative(result->fpx))
+		regs.fpsr |= FPSR_CC_N;
+	if (floatx80_is_any_nan(result->fpx))
+		regs.fpsr |= FPSR_CC_NAN;
+	else if (floatx80_is_zero(result->fpx))
+		regs.fpsr |= FPSR_CC_Z;
+	else if (floatx80_is_infinity(result->fpx))
+		regs.fpsr |= FPSR_CC_I;
+}
+
+/* fp_arithmetic for the opmodes the 68040 does itself; false when the
+ * destination is not written (FCMP, FTST) */
+static bool jit_arithmetic(fpdata *src, fpdata *dst, int extra)
+{
+	switch (extra & 0x7f) {
+	case 0x00: fpp_move(dst, src, PREC_NORMAL); break;
+	case 0x40: fpp_move(dst, src, PREC_FLOAT); break;
+	case 0x44: fpp_move(dst, src, PREC_DOUBLE); break;
+	case 0x04: fpp_sqrt(dst, src, PREC_NORMAL); break;
+	case 0x41: fpp_sqrt(dst, src, PREC_FLOAT); break;
+	case 0x45: fpp_sqrt(dst, src, PREC_DOUBLE); break;
+	case 0x18: fpp_abs(dst, src, PREC_NORMAL); break;
+	case 0x58: fpp_abs(dst, src, PREC_FLOAT); break;
+	case 0x5c: fpp_abs(dst, src, PREC_DOUBLE); break;
+	case 0x1a: fpp_neg(dst, src, PREC_NORMAL); break;
+	case 0x5a: fpp_neg(dst, src, PREC_FLOAT); break;
+	case 0x5e: fpp_neg(dst, src, PREC_DOUBLE); break;
+	case 0x20: fpp_div(dst, src, PREC_NORMAL); break;
+	case 0x60: fpp_div(dst, src, PREC_FLOAT); break;
+	case 0x64: fpp_div(dst, src, PREC_DOUBLE); break;
+	case 0x22: fpp_add(dst, src, PREC_NORMAL); break;
+	case 0x62: fpp_add(dst, src, PREC_FLOAT); break;
+	case 0x66: fpp_add(dst, src, PREC_DOUBLE); break;
+	case 0x23: fpp_mul(dst, src, PREC_NORMAL); break;
+	case 0x63: fpp_mul(dst, src, PREC_FLOAT); break;
+	case 0x67: fpp_mul(dst, src, PREC_DOUBLE); break;
+	case 0x24: fpp_sgldiv(dst, src); break;
+	case 0x27: fpp_sglmul(dst, src); break;
+	case 0x28: fpp_sub(dst, src, PREC_NORMAL); break;
+	case 0x68: fpp_sub(dst, src, PREC_FLOAT); break;
+	case 0x6c: fpp_sub(dst, src, PREC_DOUBLE); break;
+	case 0x38:
+		fpp_cmp(dst, src);
+		jit_make_status();
+		jit_set_result(dst);
+		return false;
+	default:  /* 0x3a */
+		fpp_tst(dst, src);
+		jit_make_status();
+		jit_set_result(dst);
+		return false;
+	}
+	jit_set_result(dst);
+	jit_make_status();
+	return true;
+}
+
+/* would fpsr_check_arithmetic_exception take an exception? */
+static bool jit_exception(uae_u32 mask)
+{
+	if (!support_exceptions)
+		return false;
+	return ((regs.fpsr & regs.fpcr & 0xff00) | (regs.fpsr & (FPSR_OVFL | FPSR_UNFL | mask))) != 0;
+}
+
+static void jit_start(void)
+{
+	regs.fpu_state = 1;
+	regs.fp_exception = false;
+	fpu_mmu_fixup = false;
+}
+
+/* FPU arithmetic of opclass 000 and 010 (FMOVE, FSQRT, FABS, FNEG, FDIV, FADD,
+ * FMUL, FSGLDIV, FSGLMUL, FSUB, FCMP, FTST and their single and double
+ * precision forms) from FPm, Dn, memory or an immediate */
+uae_u32 fpp_jit_arith(uae_u32 opextra, uae_u32 pc, uae_u32 unused, uae_u8 *host)
+{
+	uae_u16 opcode = opextra >> 16, extra = opextra;
+	uae_u32 fpsr = regs.fpsr, fpiar = regs.fpiar;
+	int reg = (extra >> 7) & 7;
+	fpdata src, dst;
+	bool v;
+
+	if (!jit_ready())
+		return 1;
+	jit_clear_status();
+	regs.fpiar = pc;
+	if (!(extra & 0x4000)) {
+		src = regs.fp[(extra >> 10) & 7];
+	} else if (!(opcode & 0x38)) {
+		uae_u32 d = m68k_dreg(regs, opcode & 7);
+		switch ((extra >> 10) & 7) {
+		case 6: fpset(&src, (uae_s8)d); break;
+		case 4: fpset(&src, (uae_s16)d); break;
+		case 1: fpp_to_single(&src, d); break;
+		default: fpset(&src, (uae_s32)d); break;
+		}
+	} else {
+		switch ((extra >> 10) & 7) {
+		case 0: fpset(&src, (uae_s32)do_get_mem_long(host)); break;
+		case 1: fpp_to_single(&src, do_get_mem_long(host)); break;
+		case 2: fpp_to_exten(&src, do_get_mem_long(host), do_get_mem_long(host + 4), do_get_mem_long(host + 8)); break;
+		case 4: fpset(&src, (uae_s16)do_get_mem_word(host)); break;
+		case 5: fpp_to_double(&src, do_get_mem_long(host), do_get_mem_long(host + 4)); break;
+		default: fpset(&src, (uae_s8)*host); break;
+		}
+	}
+	if (!(extra & 0x4000) || (extra & 0x1c00) == 0x0400 || (extra & 0x1c00) == 0x0800 || (extra & 0x1c00) == 0x1400) {
+		/* FPm, single, extended and double: normalized or the fault */
+		if (jit_denormal(&src))
+			goto handler;
+	}
+	dst = regs.fp[reg];
+	if (fp_is_dyadic(extra) && jit_denormal(&dst))
+		goto handler;
+	jit_start();
+	v = jit_arithmetic(&src, &dst, extra);
+	if (jit_exception(0))
+		goto handler;
+	if (v)
+		regs.fp[reg] = dst;
+	return 0;
+
+handler:
+	regs.fpsr = fpsr;
+	regs.fpiar = fpiar;
+	return 1;
+}
+
+/* FMOVE FPn,<ea> in the integer, single, double and extended formats: to Dn,
+ * or to host */
+uae_u32 fpp_jit_fmove_out(uae_u32 opextra, uae_u32 pc, uae_u32 unused, uae_u8 *host)
+{
+	uae_u16 opcode = opextra >> 16, extra = opextra;
+	uae_u32 fpsr = regs.fpsr, fpiar = regs.fpiar, w[3];
+	int size = (extra >> 10) & 7;
+	fpdata src;
+
+	if (!jit_ready())
+		return 1;
+	jit_clear_status();
+	src = regs.fp[(extra >> 7) & 7];
+	if (jit_denormal(&src))
+		goto handler;
+	switch (size) {
+	case 0: w[0] = (uae_u32)fpp_to_int(&src, 2); break;
+	case 4: w[0] = (uae_u32)fpp_to_int(&src, 1); break;
+	case 6: w[0] = (uae_u32)fpp_to_int(&src, 0); break;
+	case 1: w[0] = fpp_from_single(&src); break;
+	case 5: fpp_from_double(&src, &w[0], &w[1]); break;
+	default: fpp_from_exten(&src, &w[0], &w[1], &w[2]); break;
+	}
+	if (size == 0 || size == 4 || size == 6) {
+		/* fault_if_68040_integer_nonmaskable */
+		jit_make_status();
+		if (regs.fpsr & (FPSR_SNAN | FPSR_OPERR))
+			goto handler;
+	}
+	jit_make_status();
+	maybe_set_fpiar(pc);
+	if (jit_exception(0))
+		goto handler;
+	jit_start();
+	if (!(opcode & 0x38)) {
+		uae_u32 *d = &m68k_dreg(regs, opcode & 7);
+		switch (size) {
+		case 6: *d = (*d & ~0xff) | (w[0] & 0xff); break;
+		case 4: *d = (*d & ~0xffff) | (w[0] & 0xffff); break;
+		default: *d = w[0]; break;
+		}
+		return 0;
+	}
+	switch (size) {
+	case 6: *host = (uae_u8)w[0]; break;
+	case 4: do_put_mem_word(host, (uae_u16)w[0]); break;
+	case 0: case 1: do_put_mem_long(host, w[0]); break;
+	case 5: do_put_mem_long(host, w[0]); do_put_mem_long(host + 4, w[1]); break;
+	default: do_put_mem_long(host, w[0]); do_put_mem_long(host + 4, w[1]); do_put_mem_long(host + 8, w[2]); break;
+	}
+	return 0;
+
+handler:
+	regs.fpsr = fpsr;
+	regs.fpiar = fpiar;
+	return 1;
+}
+
+/* FMOVEM of a static list of FPn to or from memory (as fpuop_arithmetic2 and
+ * fmovem2mem / fmovem2fpp do it on the 68040), host at the lowest address */
+uae_u32 fpp_jit_fmovem(uae_u32 opextra, uae_u32 count, uae_u32 unused, uae_u8 *host)
+{
+	uae_u16 opcode = opextra >> 16, extra = opextra;
+	uae_u32 list = extra & 0xff, ad, wrd1, wrd2, wrd3;
+	int incr = 1, regdir = 1, mode = (extra >> 11) & 3, r, reg;
+
+	if (!jit_ready())
+		return 1;
+	jit_start();
+	if ((opcode & 0x38) == 0x20)
+		incr = -1;
+	if (mode == 0 && ((opcode & 0x38) == 0x20 || (extra & 0x2000)))
+		regdir = -1;
+	if (list && (extra & 0x2000) && regdir < 0 && incr > 0 && (opcode & 0x38) != 0x20)
+		regdir = -2;
+	if (list && (extra & 0x2000) && regdir > 0 && incr < 0)
+		regdir = 2;
+	/* ad is the offset from host */
+	ad = incr < 0 ? count * 12 : 0;
+	for (r = 0; r < 8; r++) {
+		reg = regdir < 0 ? 7 - r : r;
+		if (list & 0x80) {
+			if (incr < 0)
+				ad -= 12;
+			if (extra & 0x2000) {
+				fpp_from_exten_fmovem(&regs.fp[reg], &wrd1, &wrd2, &wrd3);
+				if (regdir < -1 || regdir > 1) {
+					do_put_mem_long(host + ad, wrd3);
+					do_put_mem_long(host + ad + 4, wrd2);
+					do_put_mem_long(host + ad + 8, wrd1);
+				} else {
+					do_put_mem_long(host + ad, wrd1);
+					do_put_mem_long(host + ad + 4, wrd2);
+					do_put_mem_long(host + ad + 8, wrd3);
+				}
+			} else {
+				fpp_to_exten(&regs.fp[reg], do_get_mem_long(host + ad), do_get_mem_long(host + ad + 4), do_get_mem_long(host + ad + 8));
+			}
+			if (incr > 0)
+				ad += 12;
+		}
+		list <<= 1;
+	}
+	return 0;
+}
+
+/* FMOVE of one of FPCR, FPSR and FPIAR to or from Dn, An (FPIAR), memory or
+ * an immediate (at host) */
+uae_u32 fpp_jit_fmove_cr(uae_u32 opextra, uae_u32 unused1, uae_u32 unused2, uae_u8 *host)
+{
+	uae_u16 opcode = opextra >> 16, extra = opextra;
+	int mode = (opcode >> 3) & 7;
+	uae_u32 *r = mode == 0 ? &m68k_dreg(regs, opcode & 7) : mode == 1 ? &m68k_areg(regs, opcode & 7) : NULL;
+	uae_u32 v;
+
+	if (!jit_ready())
+		return 1;
+	jit_start();
+	if (extra & 0x2000) {
+		v = (extra & 0x1000) ? fpp_get_fpcr() : (extra & 0x0800) ? fpp_get_fpsr() : fpp_get_fpiar();
+		if (r)
+			*r = v;
+		else
+			do_put_mem_long(host, v);
+		return 0;
+	}
+	v = r ? *r : do_get_mem_long(host);
+	if (extra & 0x1000)
+		fpp_set_fpcr(v);
+	else if (extra & 0x0800)
+		fpp_set_fpsr(v);
+	else
+		fpp_set_fpiar(v);
+	return 0;
+}
+
+/* The self-test's view of the FPU: the registers' bits, FPCR, FPSR, FPIAR */
+void fpp_jit_get_state(uae_u32 *w)
+{
+	int i;
+	for (i = 0; i < 8; i++)
+		fpp_from_exten_fmovem(&regs.fp[i], &w[i * 3], &w[i * 3 + 1], &w[i * 3 + 2]);
+	w[24] = regs.fpcr;
+	w[25] = regs.fpsr;
+	w[26] = regs.fpiar;
+}
+void fpp_jit_set_state(const uae_u32 *w)
+{
+	int i;
+	for (i = 0; i < 8; i++)
+		fpp_to_exten_fmovem(&regs.fp[i], w[i * 3], w[i * 3 + 1], w[i * 3 + 2]);
+	fpp_set_fpcr(w[24]);
+	regs.fpsr = w[25];
+	regs.fpiar = w[26];
 }
 
 static void get_features(void)

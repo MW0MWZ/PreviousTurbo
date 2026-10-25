@@ -983,6 +983,18 @@ extern uae_u32 jit040_get_long (uaecptr addr);
 extern void jit040_put_byte (uaecptr addr, uae_u32 v);
 extern void jit040_put_word (uaecptr addr, uae_u32 v);
 extern void jit040_put_long (uaecptr addr, uae_u32 v);
+/* and the others they use, as the 68040 MMU's (but in the self-test) */
+extern uae_u32 REGPARAM3 jit040_get_disp_ea_020 (uae_u32 base, int idx) REGPARAM;
+extern uae_u32 jit040_get_lrmw_byte (uaecptr addr);
+extern uae_u32 jit040_get_lrmw_word (uaecptr addr);
+extern uae_u32 jit040_get_lrmw_long (uaecptr addr);
+extern void jit040_put_lrmw_byte (uaecptr addr, uae_u32 v);
+extern void jit040_put_lrmw_word (uaecptr addr, uae_u32 v);
+extern void jit040_put_lrmw_long (uaecptr addr, uae_u32 v);
+extern void jit040_get_move16 (uaecptr addr, uae_u32 *v);
+extern void jit040_put_move16 (uaecptr addr, uae_u32 *v);
+extern uae_u32 jit040_get_bitfield (uae_u32 src, uae_u32 bdata[2], uae_s32 offset, int width);
+extern void jit040_put_bitfield (uae_u32 dst, uae_u32 bdata[2], uae_u32 val, uae_s32 offset, int width);
 /* The host address of a data access the page cache can do directly, or NULL */
 static ALWAYS_INLINE uae_u8 *pt_tlb_host (int type, uaecptr addr, int size)
 {
