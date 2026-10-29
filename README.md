@@ -185,32 +185,11 @@ xcode-select --install
 brew install cmake ninja pkgconf sdl3 libpng
 ```
 
-On macOS the build makes `build/PreviousTurbo.app`, a normal application with
-the menus in the system menu bar (`build/previousturbo` links to the program
-inside it, for running from the terminal). To make a copy that runs on its
-own, with the libraries it uses copied in and signed for this Mac, in the
-Applications folder:
-
-```sh
-cmake --install build --prefix /Applications
-```
-
-No `sudo` is needed: an administrator account can write to /Applications.
-(The `install_name_tool` warnings about invalidated signatures are expected:
-the copy is signed again as the last step.)
-
 On **Windows**, with [MSYS2](https://www.msys2.org): in its UCRT64 shell,
 
 ```sh
 pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja \
           mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-sdl3 mingw-w64-ucrt-x86_64-libpng
-```
-
-`build/previousturbo.exe` then runs from that shell; to run it elsewhere,
-copy the DLLs it uses from `/ucrt64/bin` next to it:
-
-```sh
-ldd build/previousturbo.exe | awk '/\/ucrt64\/bin\// {print $3}' | xargs -I{} cp {} build/
 ```
 
 For networking without NAT on Windows, install [Npcap](https://npcap.com/) and
@@ -222,7 +201,8 @@ Distribution SDL3 packages support both Wayland and X11 desktops; an SDL3
 built from source needs the Wayland and X11 development headers installed
 beforehand to support them.
 
-Then, on every system:
+Then, on every system, configure and build (the first command makes the
+`build` folder; run it again after installing a missing library):
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -235,6 +215,27 @@ Check the configure output: it lists which optional libraries were found.
 Clang works as well as GCC (`-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++`).
 On Linux, `cmake --install build` installs the program and its ROMs (under
 `/usr/local` unless `CMAKE_INSTALL_PREFIX` says otherwise).
+
+On macOS the build makes `build/PreviousTurbo.app`, a normal application with
+the menus in the system menu bar (`build/previousturbo` links to the program
+inside it, for running from the terminal). Once it is built, to make a copy
+that runs on its own, with the libraries it uses copied in and signed for
+this Mac, in the Applications folder:
+
+```sh
+cmake --install build --prefix /Applications
+```
+
+No `sudo` is needed: an administrator account can write to /Applications.
+(The `install_name_tool` warnings about invalidated signatures are expected:
+the copy is signed again as the last step.)
+
+On Windows, `build/previousturbo.exe` runs from the MSYS2 shell; to run it
+elsewhere, copy the DLLs it uses from `/ucrt64/bin` next to it:
+
+```sh
+ldd build/previousturbo.exe | awk '/\/ucrt64\/bin\// {print $3}' | xargs -I{} cp {} build/
+```
 
 A macOS build is for the Mac it is built on. One application for both Apple
 silicon and Intel Macs needs universal builds of SDL3 and libpng (Homebrew's
