@@ -64,6 +64,7 @@ void NDSDL::init(void) {
                 fprintf(stderr,"[ND] Slot %i: Failed to create window and renderer! (%s)\n", slot, SDL_GetError());
                 return;
             }
+            Screen_SetWindowIcon(ndWindow);
             SDL_SetWindowPosition(ndWindow, x+14*slot, y+14*slot);
             SDL_SetRenderLogicalPresentation(ndRenderer, NeXT_SCRN_W, NeXT_SCRN_H, SDL_LOGICAL_PRESENTATION_STRETCH);
             ndTexture = SDL_CreateTexture(ndRenderer, SDL_PIXELFORMAT_BGRA32, SDL_TEXTUREACCESS_STREAMING, NeXT_SCRN_W, NeXT_SCRN_H);

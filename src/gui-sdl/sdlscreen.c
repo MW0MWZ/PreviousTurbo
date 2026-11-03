@@ -21,6 +21,7 @@ const char SDLscreen_fileid[] = "Previous sdlscreen.c";
 #include "keymap.h"
 #include "m68000.h"
 #include "gui.h"
+#include "icon.h"
 
 
 /* NeXT screen resolution */
@@ -529,6 +530,22 @@ void Screen_Reset(void) {
 
 /*-----------------------------------------------------------------------*/
 /**
+ * Give a window the program's icon. On macOS it comes from the application
+ * bundle instead.
+ */
+void Screen_SetWindowIcon(SDL_Window* window) {
+#ifndef __APPLE__
+	SDL_Surface* icon = SDL_CreateSurfaceFrom(ICON_SIZE, ICON_SIZE, SDL_PIXELFORMAT_RGBA32,
+	                                          icon_rgba, ICON_SIZE * 4);
+	if (icon) {
+		SDL_SetWindowIcon(window, icon);
+		SDL_DestroySurface(icon);
+	}
+#endif
+}
+
+/*-----------------------------------------------------------------------*/
+/**
  * Init Screen, create window, renderer and textures
  */
 void Screen_Init(void) {
@@ -539,6 +556,7 @@ void Screen_Init(void) {
 	if (SDL_CreateWindowAndRenderer(PROG_NAME, width, height, flags, &sdlWindow, &sdlRenderer) == false) {
 		Main_ErrorExit("Failed to create window and renderer:", SDL_GetError(), -1);
 	}
+	Screen_SetWindowIcon(sdlWindow);
 
 	/* Setup lookup tables */
 	fmt = SDL_GetPixelFormatDetails(SDL_PIXELFORMAT_BGRA32);

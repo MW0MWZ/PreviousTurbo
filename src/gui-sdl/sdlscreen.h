@@ -24,6 +24,7 @@ extern bool Screen_UpdatePictures(void);
 extern int  Screen_GetPictures(SDL_Texture** tex, SDL_FRect* rects, int max);
 extern SDL_Renderer* Screen_GetRenderer(void);
 extern void Screen_SizeChanged(void);
+extern void Screen_SetWindowIcon(SDL_Window* window);
 
 extern void Screen_Init(void);
 extern void Screen_UnInit(void);

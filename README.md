@@ -1,3 +1,8 @@
+<p align="center">
+  <img src="graphics/PreviousTurboLogo.png" alt="PreviousTurbo logo" width="280"><br>
+  <sub>Logo &copy; Andy Taylor (MW0MWZ)</sub>
+</p>
+
 # PreviousTurbo
 
 PreviousTurbo is a fork of [Previous](https://sourceforge.net/projects/previous/),
@@ -103,6 +108,10 @@ around it and, with Turbo on, the speed.
 - The same CMake commands on Linux, macOS and Windows (MSYS2), with SDL3.
   On macOS the build is an application bundle, and `cmake --install` makes a
   self-contained, signed copy. Unit tests run with `ctest`.
+- The PreviousTurbo icon, on the program on every system, in the windows'
+  title bars, and in the desktop's menus on Linux after `cmake --install`.
+  The icons are made from `graphics/PreviousTurboLogo.png` by
+  `graphics/make-icons.py`.
 
 ### Fixes
 

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=PreviousTurbo
+GenericName=NeXT Computer Emulator
+Comment=Run NeXTSTEP and OPENSTEP on an emulated NeXT computer
+Exec=previousturbo
+Icon=previousturbo
+Terminal=false
+Categories=Game;Emulator;
