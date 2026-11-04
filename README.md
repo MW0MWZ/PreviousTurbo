@@ -110,8 +110,8 @@ around it and, with Turbo on, the speed.
   self-contained, signed copy. Unit tests run with `ctest`.
 - The PreviousTurbo icon, on the program on every system, in the windows'
   title bars, and in the desktop's menus on Linux after `cmake --install`.
-  The icons are made from `graphics/PreviousTurboLogo.png` by
-  `graphics/make-icons.py`.
+  The icons are made from `graphics/PreviousTurboLogo.png`: the macOS one
+  when the application is built, the others by `graphics/make-icons.py`.
 
 ### Fixes
 

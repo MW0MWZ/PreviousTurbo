@@ -62,7 +62,7 @@
     <key>CFBundleExecutable</key>
     <string>PreviousTurbo</string>
     <key>CFBundleIconFile</key>
-    <string>Previous</string>
+    <string>PreviousTurbo</string>
     <key>CFBundleIdentifier</key>
     <string>uk.co.mw0mwz.previousturbo</string>
     <key>CFBundleInfoDictionaryVersion</key>

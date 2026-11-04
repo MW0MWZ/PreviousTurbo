@@ -83,11 +83,28 @@ endif(HAIKU)
 
 if(ENABLE_OSX_BUNDLE)
 	# A macOS application: build/PreviousTurbo.app, with the system menu bar,
-	# its icon and the ROMs inside. build/previousturbo links to the program
+	# its icon (made from graphics/PreviousTurboLogo.png with sips and
+	# iconutil) and the ROMs inside. build/previousturbo links to the program
 	# inside, for the terminal. `cmake --install build --prefix DIR` makes a
 	# self-contained copy in DIR, with the libraries it uses (SDL3, libpng,
 	# ...) inside it.
-	set(ICNS gui-osx/Previous.icns)
+	set(ICON_PNG ${CMAKE_SOURCE_DIR}/graphics/PreviousTurboLogo.png)
+	set(ICONSET ${CMAKE_CURRENT_BINARY_DIR}/PreviousTurbo.iconset)
+	set(ICNS ${CMAKE_CURRENT_BINARY_DIR}/PreviousTurbo.icns)
+	set(ICON_COMMANDS)
+	foreach(size 16 32 128 256 512)
+		math(EXPR double "${size} * 2")
+		list(APPEND ICON_COMMANDS
+			COMMAND sips -z ${size} ${size} ${ICON_PNG} --out ${ICONSET}/icon_${size}x${size}.png
+			COMMAND sips -z ${double} ${double} ${ICON_PNG} --out ${ICONSET}/icon_${size}x${size}@2x.png)
+	endforeach()
+	add_custom_command(OUTPUT ${ICNS}
+		COMMAND ${CMAKE_COMMAND} -E make_directory ${ICONSET}
+		${ICON_COMMANDS}
+		COMMAND iconutil -c icns ${ICONSET} -o ${ICNS}
+		DEPENDS ${ICON_PNG}
+		COMMENT "Making the application icon"
+		VERBATIM)
 	configure_file(${CMAKE_SOURCE_DIR}/cmake/Info.plist.in ${CMAKE_BINARY_DIR}/Info.plist @ONLY)
 	add_executable(${APP_NAME} MACOSX_BUNDLE main.c $<TARGET_OBJECTS:PreviousCore> ${ICNS} ${ROMS})
 	set_source_files_properties(${ICNS} ${ROMS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
@@ -98,6 +115,9 @@ if(ENABLE_OSX_BUNDLE)
 		COMMAND ${CMAKE_COMMAND} -E rm -f ${CMAKE_BINARY_DIR}/previousturbo
 		COMMAND ${CMAKE_COMMAND} -E create_symlink "PreviousTurbo.app/Contents/MacOS/PreviousTurbo"
 			${CMAKE_BINARY_DIR}/previousturbo
+		# Finder and the Dock look at the application's date to see that
+		# its icon may have changed
+		COMMAND touch ${CMAKE_BINARY_DIR}/PreviousTurbo.app
 		VERBATIM)
 
 elseif(WIN32)
@@ -138,6 +158,7 @@ if(ENABLE_OSX_BUNDLE)
 		# Signed for this machine (ad hoc): copying the libraries in changed them.
 		execute_process(COMMAND codesign --force --deep --sign - "${app}" COMMAND_ERROR_IS_FATAL ANY)
 		execute_process(COMMAND codesign --verify --deep --strict "${app}" COMMAND_ERROR_IS_FATAL ANY)
+		execute_process(COMMAND touch "${app}")
 	]])
 else()
 	install(TARGETS ${APP_NAME} RUNTIME DESTINATION ${BINDIR})
