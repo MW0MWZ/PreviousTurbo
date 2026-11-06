@@ -17,6 +17,34 @@ runs, how quickly it boots, and how responsive it feels on the desktop.
 The name is a nod to both Previous and the NeXTstation Turbo. All the credit for
 the emulator itself belongs to the Previous authors.
 
+<p align="center">
+  <img src="docs/screenshots/openstep42-chess.png" alt="OPENSTEP 4.2 on an emulated NeXTstation Turbo Color, running the Chess demo, with PreviousTurbo's menus and status bar" width="100%"><br>
+  <sub>OPENSTEP 4.2 on a NeXTstation Turbo Color, with Turbo on</sub>
+</p>
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/screenshots/openstep42-boot.png" alt="OPENSTEP 4.2 starting: the NeXT Mach console, from the ROM monitor to Reboot complete"></td>
+    <td width="33%"><img src="docs/screenshots/openstep42-terminal.png" alt="Terminal on OPENSTEP 4.2, with hostinfo showing an MC68040 at 33 MHz and 128 MB of memory"></td>
+    <td width="33%"><img src="docs/screenshots/openstep42-mandelbrot.png" alt="The Mandelbrot demo on OPENSTEP 4.2"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Starting OPENSTEP 4.2</sub></td>
+    <td align="center"><sub>Terminal and hostinfo</sub></td>
+    <td align="center"><sub>The Mandelbrot demo</sub></td>
+  </tr>
+  <tr>
+    <td width="33%"><img src="docs/screenshots/openstep42-demos.png" alt="The Workspace File Viewer showing OPENSTEP 4.2's demo applications"></td>
+    <td width="33%"><img src="docs/screenshots/machine-menu.png" alt="PreviousTurbo's Machine menu: Settings, Pause, Turbo, Cold Reset and the debuggers"></td>
+    <td width="33%"><img src="docs/screenshots/settings.png" alt="PreviousTurbo's Settings window, Machine tab"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>OPENSTEP's demos</sub></td>
+    <td align="center"><sub>The Machine menu</sub></td>
+    <td align="center"><sub>Settings</sub></td>
+  </tr>
+</table>
+
 ## Changes from Previous
 
 PreviousTurbo is based on Previous 4.5 (SVN trunk revision 1858). With Turbo
