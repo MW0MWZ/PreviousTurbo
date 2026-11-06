@@ -333,7 +333,7 @@ static bool Main_Init(void) {
 	{
 		Main_ErrorExit("Logging/tracing initialization failed", NULL, -1);
 	}
-	Log_Printf(LOG_INFO, PROG_NAME ", compiled on:  " __DATE__ ", " __TIME__ "\n");
+	Log_Printf(LOG_INFO, PROG_NAME " " PT_VERSION ", compiled on:  " __DATE__ ", " __TIME__ "\n");
 
 	/* Init user interface */
 	UI_Init();

@@ -158,6 +158,19 @@ a letter (Ctrl+Option on a Mac), shown in the menus; **Help > Keyboard and Mouse
 See [readme.previous.txt](readme.previous.txt) for the machines Previous
 supports, ROMs, disk images, networking and more.
 
+## Downloads
+
+Ready-built programs are on the
+[releases page](https://github.com/MW0MWZ/PreviousTurbo/releases). Each one
+includes the NeXT ROMs, but no disk images or operating system media.
+
+- **Linux** (x86-64 and arm64): an AppImage, for Ubuntu 22.04, Debian 12 or
+  any distribution as new. Make it executable (`chmod +x`) and run it.
+- **Windows** (x64): a zip. Unpack it and run `previousturbo.exe`.
+- **macOS** (15 or later, Apple silicon): `PreviousTurbo.app` in a zip. It is
+  not notarized, so before opening it the first time, clear the download mark:
+  `xattr -dr com.apple.quarantine PreviousTurbo.app`.
+
 ## Building
 
 You need:

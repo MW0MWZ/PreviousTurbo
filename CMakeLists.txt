@@ -18,7 +18,10 @@ if(APPLE)
 	endforeach()
 endif()
 
-project(PreviousTurbo VERSION 0.1.0 DESCRIPTION "NeXT computer emulator" LANGUAGES C CXX)
+project(PreviousTurbo VERSION 1.0.0 DESCRIPTION "NeXT computer emulator" LANGUAGES C CXX)
+
+# The version as shown (with a stage suffix, such as -beta, between releases).
+set(PT_VERSION "${PROJECT_VERSION}")
 
 # The programs go in the top of the build folder: build/previousturbo (and
 # build/PreviousTurbo.app on macOS), build/ditool, build/pt_tests.

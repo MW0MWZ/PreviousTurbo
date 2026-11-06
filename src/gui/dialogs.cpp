@@ -150,7 +150,7 @@ void draw_dialogs() {
         auto m = std::make_shared<Modal>();
         m->title = std::string("About ") + kAppName;
         m->body = [](Modal& self) {
-            ImGui::Text("%s: a NeXT computer emulator", kAppName);
+            ImGui::Text("%s %s: a NeXT computer emulator", kAppName, PT_VERSION);
             ImGui::TextUnformatted("Based on " PROG_NAME_PREVIOUS ", the NeXT computer system (black hardware)");
             ImGui::TextUnformatted("emulator written by Andreas Grabher, Simon Schubiger and Gilles F\xc3\xa9tis");
             ImGui::TextUnformatted("with the help of many others. See readme.previous.txt for details.");

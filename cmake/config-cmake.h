@@ -1,5 +1,8 @@
 /* CMake config.h for Previous */
 
+/* The version as shown */
+#define PT_VERSION "@PT_VERSION@"
+
 /* Define if you have a PNG compatible library */
 #cmakedefine HAVE_LIBPNG 1
 
