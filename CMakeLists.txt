@@ -18,7 +18,7 @@ if(APPLE)
 	endforeach()
 endif()
 
-project(PreviousTurbo VERSION 1.0.0 DESCRIPTION "NeXT computer emulator" LANGUAGES C CXX)
+project(PreviousTurbo VERSION 1.0.1 DESCRIPTION "NeXT computer emulator" LANGUAGES C CXX)
 
 # The version as shown (with a stage suffix, such as -beta, between releases).
 set(PT_VERSION "${PROJECT_VERSION}")
@@ -153,6 +153,27 @@ endif(PNG_FOUND)
 find_package(PCAP)
 if(PCAP_FOUND)
 	set(HAVE_PCAP 1)
+	if(WIN32)
+		# Npcap's wpcap.dll is loaded only once PCAP is used (see enet_pcap.c), so that the
+		# programs also start where Npcap is not installed.
+		set(DLLTOOL ${CMAKE_DLLTOOL})
+		if(NOT DLLTOOL)
+			find_program(DLLTOOL dlltool)
+		endif()
+		set(_def ${CMAKE_BINARY_DIR}/wpcap.def)
+		file(WRITE ${_def} "LIBRARY wpcap.dll\nEXPORTS\n")
+		foreach(f pcap_close pcap_compile pcap_findalldevs pcap_freealldevs pcap_geterr
+		          pcap_getnonblock pcap_next pcap_open_live pcap_sendpacket pcap_set_immediate_mode
+		          pcap_setfilter pcap_setnonblock)
+			file(APPEND ${_def} "${f}\n")
+		endforeach()
+		execute_process(COMMAND ${DLLTOOL} -d ${_def} -y ${CMAKE_BINARY_DIR}/libwpcap-delay.a
+		                WORKING_DIRECTORY ${CMAKE_BINARY_DIR} RESULT_VARIABLE _r)
+		if(NOT _r EQUAL 0)
+			message(FATAL_ERROR "dlltool could not make libwpcap-delay.a")
+		endif()
+		set(PCAP_LIBRARY ${CMAKE_BINARY_DIR}/libwpcap-delay.a delayimp)
+	endif()
 endif(PCAP_FOUND)
 
 # Check if Large File Support is available with the standard POSIX flags

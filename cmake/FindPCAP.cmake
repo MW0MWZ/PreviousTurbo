@@ -26,12 +26,16 @@ find_path(PCAP_ROOT_DIR
 
 find_path(PCAP_INCLUDE_DIR
     NAMES pcap.h
-    HINTS ${PCAP_ROOT_DIR}/include
+    HINTS ${PCAP_ROOT_DIR}/include ${PCAP_ROOT_DIR}/Include
 )
 
+# (The Npcap SDK keeps its 64-bit libraries in Lib/x64.)
+if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(_pcap_lib_hints ${PCAP_ROOT_DIR}/Lib/x64)
+endif()
 find_library(PCAP_LIBRARY
     NAMES pcap wpcap
-    HINTS ${PCAP_ROOT_DIR}/lib ${PCAP_ROOT_DIR}/Lib
+    HINTS ${_pcap_lib_hints} ${PCAP_ROOT_DIR}/lib ${PCAP_ROOT_DIR}/Lib
 )
 
 include(FindPackageHandleStandardArgs)

@@ -8,6 +8,7 @@
 #ifndef PREV_ENET_PCAP_H
 #define PREV_ENET_PCAP_H
 
+extern bool enet_pcap_available(void);
 extern void enet_pcap_queue_poll(void);
 extern void enet_pcap_input(uint8_t *pkt, int pkt_len);
 extern void enet_pcap_stop(void);

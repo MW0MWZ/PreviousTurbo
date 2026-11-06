@@ -62,8 +62,8 @@ jobs:
           for tag in $(gh release list --repo "$repo" --limit 5 --json tagName --jq '.[].tagName'); do
             assets=$(gh release view "$tag" --repo "$repo" --json assets --jq '.assets[].name')
             missing=
-            for kind in linux-x86_64.AppImage linux-aarch64.AppImage windows-x86_64.zip macos-arm64.zip; do
-              echo "$assets" | grep -q -- "-$kind\$" || missing="$missing $kind"
+            for kind in linux-x86_64.AppImage linux-aarch64.AppImage windows-x86_64.zip 'macos-arm64.(dmg|zip)'; do
+              echo "$assets" | grep -Eq -- "-$kind\$" || missing="$missing $kind"
             done
             [ -n "$missing" ] || continue
             # Its latest build: running (left to finish), or failed in a job that ran (left for a

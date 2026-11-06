@@ -3,11 +3,19 @@
 # .github/workflows/release.yml and zip: builds and makes
 # out/PreviousTurbo-VERSION-windows-x86_64.zip, with the NeXT ROMs, the DLLs the programs load,
 # the documents and the licences of everything in it.
+# PCAP networking is built with the Npcap SDK, fetched here; Npcap itself is installed by the user.
 set -e
 b=build-release
-cmake -S . -B $b -G Ninja -DCMAKE_BUILD_TYPE=Release -DBINDIR=. \
+sdk=npcap-sdk-1.17
+if [ ! -d $b/$sdk ]; then
+  mkdir -p $b/$sdk
+  curl -fsSL -o $b/$sdk.zip https://npcap.com/dist/$sdk.zip
+  echo "ab7e1a6cb8d07427e0071ec11be380bd9d2bb19ae6ab3f5ede0698c301638258  $b/$sdk.zip" | sha256sum -c
+  unzip -q -d $b/$sdk $b/$sdk.zip
+fi
+cmake -S . -B $b -G Ninja -DCMAKE_BUILD_TYPE=Release -DBINDIR=. -DPCAP_ROOT_DIR="$(cygpath -m "$PWD/$b/$sdk")" \
       -DCMAKE_EXE_LINKER_FLAGS='-static-libstdc++ -static-libgcc' 2>&1 | tee configure.log
-for lib in png readline; do
+for lib in png readline pcap; do
   grep -q -- "- $lib : *found" configure.log || { echo "$lib was not found"; exit 1; }
 done
 cmake --build $b

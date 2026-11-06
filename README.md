@@ -166,10 +166,12 @@ includes the NeXT ROMs, but no disk images or operating system media.
 
 - **Linux** (x86-64 and arm64): an AppImage, for Ubuntu 22.04, Debian 12 or
   any distribution as new. Make it executable (`chmod +x`) and run it.
-- **Windows** (x64): a zip. Unpack it and run `previousturbo.exe`.
-- **macOS** (15 or later, Apple silicon): `PreviousTurbo.app` in a zip. It is
-  not notarized, so before opening it the first time, clear the download mark:
-  `xattr -dr com.apple.quarantine PreviousTurbo.app`.
+- **Windows** (x64): a zip. Unpack it and run `previousturbo.exe`. For
+  networking without NAT (PCAP), install [Npcap](https://npcap.com/) too.
+- **macOS** (15 or later, Apple silicon): a disk image. Open it and drag
+  `PreviousTurbo.app` to Applications. It is not notarized, so before opening
+  it the first time, clear the download mark:
+  `xattr -dr com.apple.quarantine /Applications/PreviousTurbo.app`.
 
 ## Building
 
@@ -215,8 +217,9 @@ pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x
           mingw-w64-ucrt-x86_64-readline
 ```
 
-For networking without NAT on Windows, install [Npcap](https://npcap.com/) and
-its SDK, and build with libpcap found.
+For networking without NAT, unpack the [Npcap SDK](https://npcap.com/#download)
+and give its folder to CMake with `-DPCAP_ROOT_DIR=`. Npcap itself is needed
+only to use PCAP: the program runs without it, with PCAP unavailable.
 
 Ubuntu 24.04 LTS and older releases do not package SDL3; build and install
 it from source first ([SDL's build instructions](https://github.com/libsdl-org/SDL/blob/main/docs/README-cmake.md)).

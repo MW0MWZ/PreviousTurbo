@@ -1,6 +1,6 @@
 #!/bin/sh
 # On macOS, from the source folder, with the README's Homebrew packages: builds and makes
-# out/PreviousTurbo-VERSION-macos-ARCH.zip, the app (with the NeXT ROMs and its libraries
+# out/PreviousTurbo-VERSION-macos-ARCH.dmg, the app (with the NeXT ROMs and its libraries
 # copied in, signed by cmake --install), the documents and the licences of everything in it.
 # MACOS_MIN, if set, is the oldest macOS the download is said to run on: it stops if any of
 # the app's code needs a newer one.
@@ -52,4 +52,10 @@ echo "needs macOS $need"
 if [ -n "$MACOS_MIN" ] && [ "$(printf '%s\n%s\n' "$need" "$MACOS_MIN" | sort -t. -k1,1n -k2,2n | tail -1)" != "$MACOS_MIN" ]; then
   echo "needs macOS $need, newer than $MACOS_MIN"; exit 1
 fi
-(cd stage && ditto -c -k --keepParent $top ../out/$top.zip)
+ln -s /Applications $s/Applications
+# (hdiutil is sometimes busy on a newly started machine, so a few tries.)
+for i in 1 2 3; do
+  hdiutil create -volname "PreviousTurbo $v" -srcfolder $s -fs HFS+ -format UDZO -ov out/$top.dmg && break
+  [ $i = 3 ] && exit 1
+  sleep 10
+done

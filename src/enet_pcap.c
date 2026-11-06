@@ -22,6 +22,28 @@ const char Enet_pcap_fileid[] = "Previous enet_pcap.c";
 
 #define LOG_EN_PCAP_LEVEL LOG_DEBUG
 
+/* Whether PCAP can be used. On Windows, wpcap.dll is loaded only when first used, from
+ * Npcap's folder (or, as installed in WinPcap-compatible mode, the system's), and PCAP
+ * cannot be used without it. */
+bool enet_pcap_available(void) {
+#ifdef _WIN32
+    static int available = -1;
+    if (available < 0) {
+        char path[MAX_PATH];
+        UINT n = GetSystemDirectoryA(path, MAX_PATH);
+        available = n > 0 && n < MAX_PATH - 20 &&
+                    LoadLibraryExA(strcat(path, "\\Npcap\\wpcap.dll"), NULL,
+                                   LOAD_WITH_ALTERED_SEARCH_PATH) != NULL;
+        if (!available) {
+            available = LoadLibraryA("wpcap.dll") != NULL;
+        }
+    }
+    return available;
+#else
+    return true;
+#endif
+}
+
 /****************/
 /* --- PCAP --- */
 
@@ -129,6 +151,10 @@ void enet_pcap_start(uint8_t *mac) {
     bpf_u_int32 net = 0xffffffff;
 
     if (!pcap_started) {
+        if (!enet_pcap_available()) {
+            Log_Printf(LOG_WARN, "[PCAP] Error: Npcap is not installed (https://npcap.com)");
+            return;
+        }
         Log_Printf(LOG_WARN, "Starting PCAP (%02x:%02x:%02x:%02x:%02x:%02x)",
                    mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
         

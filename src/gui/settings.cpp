@@ -39,6 +39,7 @@ extern "C" {
 #include "statusbar.h"
 #if HAVE_PCAP
 #include <pcap.h>
+#include "enet_pcap.h"
 #endif
 }
 #include "dimension.hpp"
@@ -803,6 +804,7 @@ std::vector<PcapDevice> pcap_devices() {
     std::vector<PcapDevice> list;
     pcap_if_t* all = nullptr;
     char err[PCAP_ERRBUF_SIZE];
+    if (!enet_pcap_available()) return list;
     if (pcap_findalldevs(&all, err) == -1) {
         std::printf("Error in pcap_findalldevs: %s\n", err);
         return list;
@@ -836,10 +838,13 @@ void tab_network() {
     label("Host interface");
     if (ImGui::RadioButton("SLiRP", e.nHostInterface == ENET_SLIRP)) e.nHostInterface = ENET_SLIRP;
     ImGui::SameLine();
+    ImGui::BeginDisabled(!enet_pcap_available());
     if (ImGui::RadioButton("PCAP", e.nHostInterface == ENET_PCAP)) {
         e.nHostInterface = ENET_PCAP;
         e.bNetworkTime = false;  // network time only works with SLiRP
     }
+    ImGui::EndDisabled();
+    if (!enet_pcap_available()) ImGui::SetItemTooltip("Needs Npcap, from npcap.com");
     if (e.nHostInterface == ENET_PCAP) {
         ImGui::SameLine();
         ImGui::SetNextItemWidth(S(220));
@@ -932,7 +937,9 @@ void tab_network() {
         ImGui::PopID();
     }
     note("The first NFS share cannot be renamed.");
-#if HAVE_PCAP
+#if HAVE_PCAP && defined(_WIN32)
+    note("PCAP needs Npcap installed (npcap.com).");
+#elif HAVE_PCAP
     note("PCAP requires super user privileges.");
 #endif
 }
