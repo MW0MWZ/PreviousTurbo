@@ -204,14 +204,15 @@ the compiler and [Homebrew](https://brew.sh) for the rest:
 
 ```sh
 xcode-select --install
-brew install cmake ninja pkgconf sdl3 libpng
+brew install cmake ninja pkgconf sdl3 libpng readline
 ```
 
 On **Windows**, with [MSYS2](https://www.msys2.org): in its UCRT64 shell,
 
 ```sh
 pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja \
-          mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-sdl3 mingw-w64-ucrt-x86_64-libpng
+          mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-sdl3 mingw-w64-ucrt-x86_64-libpng \
+          mingw-w64-ucrt-x86_64-readline
 ```
 
 For networking without NAT on Windows, install [Npcap](https://npcap.com/) and

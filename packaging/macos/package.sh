@@ -7,7 +7,7 @@
 set -e
 b=build-release
 cmake -S . -B $b -G Ninja -DCMAKE_BUILD_TYPE=Release 2>&1 | tee configure.log
-for lib in png pcap xattr.h; do
+for lib in png readline pcap xattr.h; do
   grep -q -- "- $lib : *found" configure.log || { echo "$lib was not found"; exit 1; }
 done
 cmake --build $b

@@ -4,7 +4,8 @@ IF (READLINE_INCLUDE_DIR)
 	SET(READLINE_FIND_QUIETLY TRUE)
 ENDIF (READLINE_INCLUDE_DIR)
 
-FIND_PATH(READLINE_INCLUDE_DIR readline.h PATH_SUFFIXES readline)
+# The folder holding readline/readline.h, as the sources include it
+FIND_PATH(READLINE_INCLUDE_DIR readline/readline.h)
 
 FIND_LIBRARY(READLINE_LIBRARY NAMES readline)
 
@@ -20,7 +21,7 @@ if(Readline_FOUND)
 	set(CMAKE_REQUIRED_LIBRARIES ${READLINE_LIBRARY})
 	set(CMAKE_REQUIRED_INCLUDES ${READLINE_INCLUDE_DIR})
 	check_symbol_exists(rl_filename_completion_function
-			    "stdio.h;readline.h"
+			    "stdio.h;readline/readline.h"
 			    HAVE_RL_COMPLETION_FUNCTION)
 	# If linking did not work, we might have to link
 	# explicitly against libtermcap or libncurses

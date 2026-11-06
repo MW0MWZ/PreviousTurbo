@@ -135,6 +135,11 @@ endif(NOT SDL3_FOUND)
 
 find_package(Math)
 
+# GNU readline, rather than macOS's own stand-in for it, from Homebrew
+# (which keeps it out of the usual folders)
+if(APPLE)
+	list(APPEND CMAKE_PREFIX_PATH /opt/homebrew/opt/readline /usr/local/opt/readline)
+endif()
 find_package(Readline)
 if(Readline_FOUND)
 	set(HAVE_LIBREADLINE 1)
@@ -407,6 +412,12 @@ if(PNG_FOUND)
 else()
   message( "  - png :     not found, install it to print to files using png" )
 endif(PNG_FOUND)
+
+if(Readline_FOUND)
+  message( "  - readline : found, allows editing the debugger's command line" )
+else()
+  message( "  - readline : not found, install it to edit the debugger's command line" )
+endif(Readline_FOUND)
 
 if(PCAP_FOUND)
   message( "  - pcap :    found, allows networking without NAT" )

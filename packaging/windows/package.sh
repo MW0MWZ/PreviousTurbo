@@ -7,7 +7,7 @@ set -e
 b=build-release
 cmake -S . -B $b -G Ninja -DCMAKE_BUILD_TYPE=Release -DBINDIR=. \
       -DCMAKE_EXE_LINKER_FLAGS='-static-libstdc++ -static-libgcc' 2>&1 | tee configure.log
-for lib in png; do
+for lib in png readline; do
   grep -q -- "- $lib : *found" configure.log || { echo "$lib was not found"; exit 1; }
 done
 cmake --build $b
