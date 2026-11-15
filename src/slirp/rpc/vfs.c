@@ -412,9 +412,9 @@ int vfs_get_fstat(struct vfs_t* vfs, const struct path_t* path, struct stat* fst
             fstat->st_mode |= sattr.mode & S_IFMT; /* copy format from attributes */
         }
     }
-    fstat->st_uid  = valid16(sattr.uid)  ? sattr.uid  : fstat->st_uid;
-    fstat->st_gid  = valid16(sattr.gid)  ? sattr.gid  : fstat->st_gid;
-    fstat->st_rdev = valid16(sattr.rdev) ? sattr.rdev : fstat->st_rdev;
+    if (valid16(sattr.uid))  fstat->st_uid  = sattr.uid;
+    if (valid16(sattr.gid))  fstat->st_gid  = sattr.gid;
+    if (valid16(sattr.rdev)) fstat->st_rdev = sattr.rdev;
     
     return result;
 }

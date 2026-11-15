@@ -196,10 +196,11 @@ includes the NeXT ROMs, but no disk images or operating system media.
   any distribution as new. Make it executable (`chmod +x`) and run it.
 - **Windows** (x64): a zip. Unpack it and run `previousturbo.exe`. For
   networking without NAT (PCAP), install [Npcap](https://npcap.com/) too.
-- **macOS** (15 or later, Apple silicon): a disk image. Open it and drag
-  `PreviousTurbo.app` to Applications. It is not notarized, so before opening
+- **macOS** (15 or later): a disk image, `arm64` for Apple silicon or
+  `x86_64` for Intel. Open it and drag
+  `Previous Turbo.app` to Applications. It is not notarized, so before opening
   it the first time, clear the download mark:
-  `xattr -dr com.apple.quarantine /Applications/PreviousTurbo.app`.
+  `xattr -dr com.apple.quarantine "/Applications/Previous Turbo.app"`.
 
 ## Building
 
@@ -270,7 +271,7 @@ Clang works as well as GCC (`-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang
 On Linux, `cmake --install build` installs the program and its ROMs (under
 `/usr/local` unless `CMAKE_INSTALL_PREFIX` says otherwise).
 
-On macOS the build makes `build/PreviousTurbo.app`, a normal application with
+On macOS the build makes `build/Previous Turbo.app`, a normal application with
 the menus in the system menu bar (`build/previousturbo` links to the program
 inside it, for running from the terminal). Once it is built, to make a copy
 that runs on its own, with the libraries it uses copied in and signed for
@@ -306,7 +307,7 @@ Set with `-D<option>=ON` or `OFF` when running `cmake -S . -B build`:
 | `ENABLE_DSP_EMU` | ON | Emulate the DSP56001 |
 | `ENABLE_TRACING` | ON | Tracing messages for debugging |
 | `ENABLE_ASAN`, `ENABLE_UBSAN` | OFF | Address and undefined-behaviour sanitizers |
-| `ENABLE_OSX_BUNDLE` | ON on macOS | Build `PreviousTurbo.app` |
+| `ENABLE_OSX_BUNDLE` | ON on macOS | Build `Previous Turbo.app` |
 | `PT_BUILD_TESTS` | ON | Build the unit tests (`ctest --test-dir build`) |
 
 The original build notes are in [building.previous.txt](building.previous.txt).

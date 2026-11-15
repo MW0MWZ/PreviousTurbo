@@ -82,7 +82,7 @@ if(HAIKU)
 endif(HAIKU)
 
 if(ENABLE_OSX_BUNDLE)
-	# A macOS application: build/PreviousTurbo.app, with the system menu bar,
+	# A macOS application: build/Previous Turbo.app, with the system menu bar,
 	# its icon (made from graphics/PreviousTurboLogo.png with sips and
 	# iconutil) and the ROMs inside. build/previousturbo links to the program
 	# inside, for the terminal. `cmake --install build --prefix DIR` makes a
@@ -109,15 +109,15 @@ if(ENABLE_OSX_BUNDLE)
 	add_executable(${APP_NAME} MACOSX_BUNDLE main.c $<TARGET_OBJECTS:PreviousCore> ${ICNS} ${ROMS})
 	set_source_files_properties(${ICNS} ${ROMS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
 	set_target_properties(${APP_NAME} PROPERTIES
-			      OUTPUT_NAME "PreviousTurbo"
+			      OUTPUT_NAME "Previous Turbo"
 			      MACOSX_BUNDLE_INFO_PLIST ${CMAKE_BINARY_DIR}/Info.plist)
 	add_custom_command(TARGET ${APP_NAME} POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E rm -f ${CMAKE_BINARY_DIR}/previousturbo
-		COMMAND ${CMAKE_COMMAND} -E create_symlink "PreviousTurbo.app/Contents/MacOS/PreviousTurbo"
+		COMMAND ${CMAKE_COMMAND} -E create_symlink "Previous Turbo.app/Contents/MacOS/Previous Turbo"
 			${CMAKE_BINARY_DIR}/previousturbo
 		# Finder and the Dock look at the application's date to see that
 		# its icon may have changed
-		COMMAND touch ${CMAKE_BINARY_DIR}/PreviousTurbo.app
+		COMMAND touch "${CMAKE_BINARY_DIR}/Previous Turbo.app"
 		VERBATIM)
 
 elseif(WIN32)
@@ -150,11 +150,11 @@ if(ENABLE_OSX_BUNDLE)
 	install(TARGETS ${APP_NAME} BUNDLE DESTINATION .)
 	# The Info.plist is installed explicitly as well, and the libraries are
 	# gathered from the program's own path, so neither depends on the other.
-	install(FILES ${CMAKE_BINARY_DIR}/Info.plist DESTINATION "PreviousTurbo.app/Contents")
+	install(FILES ${CMAKE_BINARY_DIR}/Info.plist DESTINATION "Previous Turbo.app/Contents")
 	install(CODE [[
 		include(BundleUtilities)
-		set(app "${CMAKE_INSTALL_PREFIX}/PreviousTurbo.app")
-		fixup_bundle("${app}/Contents/MacOS/PreviousTurbo" "" "")
+		set(app "${CMAKE_INSTALL_PREFIX}/Previous Turbo.app")
+		fixup_bundle("${app}/Contents/MacOS/Previous Turbo" "" "")
 		# Signed for this machine (ad hoc): copying the libraries in changed them.
 		execute_process(COMMAND codesign --force --deep --sign - "${app}" COMMAND_ERROR_IS_FATAL ANY)
 		execute_process(COMMAND codesign --verify --deep --strict "${app}" COMMAND_ERROR_IS_FATAL ANY)

@@ -4,7 +4,7 @@
 # licences of everything built in or bundled.
 set -e
 b=/tmp/build
-cmake -S /src -B $b -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+cmake -S /src -B $b -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_WERROR=ON -DCMAKE_INSTALL_PREFIX=/usr \
       -DCMAKE_EXE_LINKER_FLAGS='-static-libstdc++ -static-libgcc' 2>&1 | tee /tmp/configure.log
 for lib in png readline pcap xattr.h; do
   grep -q -- "- $lib : *found" /tmp/configure.log || { echo "$lib was not found"; exit 1; }

@@ -95,7 +95,8 @@ void NextDimension::rom_load() {
         return;
     }
     
-    fread(rom, 1, 128 * 1024, romfile);
+    if (fread(rom, 1, 128 * 1024, romfile) != 128 * 1024)
+        Log_Printf(LOG_WARN, "[ND] Warning: ROM file is shorter than 128 KiB");
     
     Log_Printf(LOG_WARN, "[ND] Read ROM from %s",ConfigureParams.Dimension.board[ND_NUM(slot)].szRomFileName);
     

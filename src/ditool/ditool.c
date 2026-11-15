@@ -688,7 +688,9 @@ static bool is_mount(const char* path) {
 
 static int ditool_remove(const char* fpath, const struct stat* sb, int typeflag, struct FTW* ftwbuf) {
 #ifndef _WIN32
-    fchmodat(AT_FDCWD, fpath, ACCESSPERMS, AT_SYMLINK_NOFOLLOW);
+    if (fchmodat(AT_FDCWD, fpath, ACCESSPERMS, AT_SYMLINK_NOFOLLOW) != 0) {
+        /* (remove() below fails in turn if it matters) */
+    }
     remove(fpath);
 #else
     char zzPath[FILENAME_MAX];

@@ -18,13 +18,13 @@ if(APPLE)
 	endforeach()
 endif()
 
-project(PreviousTurbo VERSION 1.0.1 DESCRIPTION "NeXT computer emulator" LANGUAGES C CXX)
+project(PreviousTurbo VERSION 1.0.2 DESCRIPTION "NeXT computer emulator" LANGUAGES C CXX)
 
 # The version as shown (with a stage suffix, such as -beta, between releases).
 set(PT_VERSION "${PROJECT_VERSION}")
 
 # The programs go in the top of the build folder: build/previousturbo (and
-# build/PreviousTurbo.app on macOS), build/ditool, build/pt_tests.
+# build/Previous Turbo.app on macOS), build/ditool, build/pt_tests.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)

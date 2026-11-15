@@ -13,7 +13,7 @@ if [ ! -d $b/$sdk ]; then
   echo "ab7e1a6cb8d07427e0071ec11be380bd9d2bb19ae6ab3f5ede0698c301638258  $b/$sdk.zip" | sha256sum -c
   unzip -q -d $b/$sdk $b/$sdk.zip
 fi
-cmake -S . -B $b -G Ninja -DCMAKE_BUILD_TYPE=Release -DBINDIR=. -DPCAP_ROOT_DIR="$(cygpath -m "$PWD/$b/$sdk")" \
+cmake -S . -B $b -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_WERROR=ON -DBINDIR=. -DPCAP_ROOT_DIR="$(cygpath -m "$PWD/$b/$sdk")" \
       -DCMAKE_EXE_LINKER_FLAGS='-static-libstdc++ -static-libgcc' 2>&1 | tee configure.log
 for lib in png readline pcap; do
   grep -q -- "- $lib : *found" configure.log || { echo "$lib was not found"; exit 1; }

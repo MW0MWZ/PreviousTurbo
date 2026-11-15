@@ -6,7 +6,7 @@
 # the app's code needs a newer one.
 set -e
 b=build-release
-cmake -S . -B $b -G Ninja -DCMAKE_BUILD_TYPE=Release 2>&1 | tee configure.log
+cmake -S . -B $b -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_WERROR=ON 2>&1 | tee configure.log
 for lib in png readline pcap xattr.h; do
   grep -q -- "- $lib : *found" configure.log || { echo "$lib was not found"; exit 1; }
 done
@@ -17,15 +17,15 @@ top=PreviousTurbo-$v-macos-$(uname -m)
 s=stage/$top
 rm -rf stage && mkdir -p $s/licenses out
 cmake --install $b --prefix "$PWD/$s"  # (an absolute path, as fixup_bundle needs)
-app=$s/PreviousTurbo.app
-codesign --verify --deep --strict $app
+app="$s/Previous Turbo.app"
+codesign --verify --deep --strict "$app"
 cp README.md readme.previous.txt networking.howto.txt netboot.howto.txt filesharing.howto.txt $s/
 cp gpl.txt $s/COPYING.txt
 cp third_party/imgui/LICENSE.txt $s/licenses/imgui.txt
 cp src/slirp/COPYRIGHT $s/licenses/slirp.txt
 # The Homebrew formulas the libraries come from, through their own imports.
 brew_libs() { otool -L "$1" | awk 'NR > 1 {print $1}' | grep "^$(brew --prefix)/" || true; }
-seen= todo=$(brew_libs $b/PreviousTurbo.app/Contents/MacOS/PreviousTurbo)
+seen= todo=$(brew_libs "$app/Contents/MacOS/Previous Turbo")
 while [ -n "$todo" ]; do
   set -- $todo; l=$1; shift; todo="$*"
   case " $seen " in *" $l "*) continue;; esac
@@ -45,7 +45,7 @@ for f in $(for l in $seen; do realpath $l; done | sed -n "s|^$(brew --prefix)/Ce
 done
 ls $s/licenses
 # The newest macOS any of the app's code was built for.
-need=$(find $app/Contents -type f \( -perm -u+x -o -name '*.dylib' \) | while read -r f; do
+need=$(find "$app/Contents" -type f \( -perm -u+x -o -name '*.dylib' \) | while read -r f; do
   otool -l "$f" | awk '/LC_BUILD_VERSION/ {b = 1} b && /minos/ {print $2; exit}'
 done | sort -t. -k1,1n -k2,2n | tail -1)
 echo "needs macOS $need"

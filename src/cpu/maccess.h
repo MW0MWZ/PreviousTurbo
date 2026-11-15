@@ -127,7 +127,8 @@ STATIC_INLINE uae_u32 do_get_mem_word_unswapped(uae_u16 *a)
 static inline uint8_t* malloc_aligned(size_t size) {
 #if defined(HAVE_POSIX_MEMALIGN)
 	void* result = NULL;
-	posix_memalign(&result, 0x10000, size);
+	if (posix_memalign(&result, 0x10000, size) != 0)
+		result = NULL;
 	return (uint8_t*)result;
 #elif defined(HAVE_ALIGNED_ALLOC)
 	return (uint8_t*)aligned_alloc(0x10000, size);
